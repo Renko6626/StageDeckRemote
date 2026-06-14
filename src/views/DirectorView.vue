@@ -8,6 +8,7 @@ import WindowPicker from "../components/WindowPicker.vue";
 import QrCodePanel from "../components/QrCodePanel.vue";
 import LocalControlPanel from "../components/LocalControlPanel.vue";
 import LogPanel from "../components/LogPanel.vue";
+import VbaSpikePanel from "../components/VbaSpikePanel.vue";
 
 const app = useAppState();
 let timer: number | undefined;
@@ -34,6 +35,7 @@ onUnmounted(() => {
     </div>
     <div class="col">
       <LogPanel />
+      <VbaSpikePanel />
     </div>
   </div>
 </template>

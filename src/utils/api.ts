@@ -40,4 +40,6 @@ export const api = {
   localBlack: () => invoke<void>("local_black"),
   localRestore: () => invoke<void>("local_restore"),
   getLogs: () => invoke<LogEntry[]>("get_logs"),
+  vbaListMacros: () => invoke<string[]>("vba_list_macros"),
+  vbaRunMacro: (name: string) => invoke<void>("vba_run_macro", { name }),
 };
