@@ -75,6 +75,25 @@ pub fn encode_scaled_jpeg(
     Ok(buf)
 }
 
+/// 一帧紧排 BGRA 像素 + 尺寸。WGC 会话写入、snapshot 读取。跨平台纯数据。
+#[derive(Clone, Debug)]
+pub struct CapturedFrame {
+    pub bgra: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 把一帧 BGRA 编码为 JPEG（复用纯函数 bgra_to_rgb + encode_scaled_jpeg）。
+pub fn encode_captured_frame(
+    frame: &CapturedFrame,
+    max_w: u32,
+    max_h: u32,
+    quality: u8,
+) -> Result<Vec<u8>, CaptureError> {
+    let rgb = bgra_to_rgb(&frame.bgra, frame.width, frame.height);
+    encode_scaled_jpeg(&rgb, frame.width, frame.height, max_w, max_h, quality)
+}
+
 /// 截取当前选中窗口；未选窗口时返回占位图，方便链路联调。
 pub fn snapshot_jpeg(
     state: &AppState,
@@ -223,5 +242,14 @@ mod tests {
         let jpeg = encode_scaled_jpeg(&rgb, 4, 4, 1280, 720, 80).unwrap();
         let decoded = image::load_from_memory(&jpeg).unwrap().to_rgb8();
         assert_eq!((decoded.width(), decoded.height()), (4, 4));
+    }
+
+    #[test]
+    fn encodes_captured_frame_to_decodable_jpeg() {
+        // 2x2 BGRA: all red (B=0,G=0,R=255,A=255)
+        let frame = CapturedFrame { bgra: vec![0u8, 0, 255, 255].repeat(4), width: 2, height: 2 };
+        let jpeg = encode_captured_frame(&frame, 1280, 720, 80).unwrap();
+        let decoded = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        assert_eq!((decoded.width(), decoded.height()), (2, 2));
     }
 }
