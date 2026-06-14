@@ -1,6 +1,6 @@
 //! 窗口枚举与 PPT 放映窗口识别（spec §11.6）。
 //!
-//! Windows 下用 Win32 `EnumWindows` / `GetWindowRect` 等实现；
+//! Windows 下用 Win32 `EnumWindows` / `GetClientRect` 等实现；
 //! 其它平台返回空集合，保证服务层可跨平台编译。
 
 use crate::app_state::TargetWindow;
@@ -32,35 +32,109 @@ pub fn is_capturable_window(title: &str, _style: u32, exstyle: u32, width: i32, 
 
 #[cfg(windows)]
 mod imp {
-    use super::TargetWindow;
+    use super::{is_capturable_window, TargetWindow};
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, TRUE};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClientRect, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, IsWindow,
+        IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE, GWL_STYLE,
+    };
 
-    /// 枚举当前可见、带标题的顶层窗口。
+    fn hwnd_to_isize(h: HWND) -> isize {
+        h.0 as isize
+    }
+    fn isize_to_hwnd(v: isize) -> HWND {
+        HWND(v as *mut core::ffi::c_void)
+    }
+
+    /// 读取窗口标题。
+    fn window_title(hwnd: HWND) -> String {
+        unsafe {
+            let len = GetWindowTextLengthW(hwnd);
+            if len <= 0 {
+                return String::new();
+            }
+            let mut buf = vec![0u16; len as usize + 1];
+            let n = GetWindowTextW(hwnd, &mut buf);
+            String::from_utf16_lossy(&buf[..n as usize])
+        }
+    }
+
+    /// 客户区在屏幕坐标系下的矩形（物理像素）：(left, top, width, height)。
+    fn client_screen_rect(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+        unsafe {
+            let mut rc = RECT::default();
+            GetClientRect(hwnd, &mut rc).ok()?;
+            let mut origin = POINT { x: 0, y: 0 };
+            if !ClientToScreen(hwnd, &mut origin).as_bool() {
+                return None;
+            }
+            let width = rc.right - rc.left;
+            let height = rc.bottom - rc.top;
+            if width <= 0 || height <= 0 {
+                return None;
+            }
+            Some((origin.x, origin.y, width, height))
+        }
+    }
+
+    fn to_target(hwnd: HWND) -> Option<TargetWindow> {
+        let (left, top, width, height) = client_screen_rect(hwnd)?;
+        Some(TargetWindow {
+            title: window_title(hwnd),
+            left,
+            top,
+            width,
+            height,
+            handle: hwnd_to_isize(hwnd),
+        })
+    }
+
+    extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            let out = &mut *(lparam.0 as *mut Vec<TargetWindow>);
+            if !IsWindowVisible(hwnd).as_bool() {
+                return TRUE;
+            }
+            let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+            let exstyle = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            let title = window_title(hwnd);
+            if let Some((_, _, w, h)) = client_screen_rect(hwnd) {
+                if is_capturable_window(&title, style, exstyle, w, h) {
+                    if let Some(t) = to_target(hwnd) {
+                        out.push(t);
+                    }
+                }
+            }
+            TRUE
+        }
+    }
+
     pub fn list_windows() -> Vec<TargetWindow> {
-        // TODO(windows): EnumWindows + IsWindowVisible + GetWindowTextW + GetWindowRect。
-        Vec::new()
+        let mut out: Vec<TargetWindow> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(enum_proc), LPARAM(&mut out as *mut _ as isize));
+        }
+        out
     }
 
-    /// 自动识别 PowerPoint 放映窗口（标题含 "PowerPoint" / 放映窗口类名 "screenClass"）。
     pub fn find_powerpoint() -> Option<TargetWindow> {
-        // TODO(windows)
+        // 本轮保持未实现（自动识别属下一增量）。
         None
     }
 
-    /// 读取指定句柄窗口当前矩形（位置可能变化）。
     pub fn window_rect(handle: isize) -> Option<TargetWindow> {
-        let _ = handle;
-        None
+        to_target(isize_to_hwnd(handle))
     }
 
-    /// 检查目标窗口是否仍然存在。
     pub fn window_exists(handle: isize) -> bool {
-        let _ = handle;
-        false
+        unsafe { IsWindow(isize_to_hwnd(handle)).as_bool() }
     }
 
-    /// 将目标窗口置前（翻页前确保 PPT 窗口获得焦点，spec §18.2）。
     pub fn bring_to_front(handle: isize) {
-        let _ = handle;
+        unsafe {
+            let _ = SetForegroundWindow(isize_to_hwnd(handle));
+        }
     }
 }
 
