@@ -79,38 +79,71 @@ async function pick(w: TargetWindow) {
 
 <style scoped>
 .current {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
 }
+
 .title {
-  font-weight: 600;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  margin-bottom: 4px;
 }
+
 .meta {
-  font-size: 13px;
-  opacity: 0.6;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
 }
+
 .actions {
   display: flex;
   gap: 8px;
+  margin-bottom: 2px;
 }
+
+.actions button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+}
+
+.error {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
+  margin: 8px 0 0;
+}
+
 .win-list {
   list-style: none;
   padding: 0;
   margin: 10px 0 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   max-height: 160px;
   overflow: auto;
 }
+
 .win {
   width: 100%;
   text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
 }
-.error {
-  color: #ff453a;
-  font-size: 13px;
-}
+
 .hint {
-  font-size: 12px;
-  opacity: 0.5;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  margin: 8px 0 0;
 }
 </style>
