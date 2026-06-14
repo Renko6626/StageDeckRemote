@@ -45,18 +45,22 @@ mod com {
     const IID_NULL: GUID = GUID::from_u128(0);
 
     /// 进程级 COM 初始化守卫（每次命令调用一次）。
-    pub struct ComGuard;
+    pub struct ComGuard {
+        uninit: bool,
+    }
     impl ComGuard {
         pub fn init() -> Self {
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            }
-            ComGuard
+            let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            // 只有本次确实初始化成功（S_OK/S_FALSE）才在 Drop 里平衡 CoUninitialize；
+            // RPC_E_CHANGED_MODE 表示线程已被别处初始化为不同公寓，本次未持有引用，不能 uninit。
+            ComGuard { uninit: hr.is_ok() }
         }
     }
     impl Drop for ComGuard {
         fn drop(&mut self) {
-            unsafe { CoUninitialize() };
+            if self.uninit {
+                unsafe { CoUninitialize() };
+            }
         }
     }
 
