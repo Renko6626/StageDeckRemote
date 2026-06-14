@@ -45,31 +45,56 @@ async function openInBrowser() {
 
 <style scoped>
 .net {
-  font-size: 13px;
-  opacity: 0.8;
-  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  margin-bottom: 12px;
 }
+
+.net b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .qr-row {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  gap: 14px;
+  align-items: flex-start;
 }
+
 .qr {
-  border-radius: 8px;
+  border: 1px solid var(--line-hi);
+  border-radius: 0;
   flex: 0 0 auto;
+  background: #fff;
 }
+
 .url-box {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
+
 .url {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
   word-break: break-all;
 }
+
 .muted {
-  opacity: 0.5;
+  color: var(--ink-faint);
+}
+
+.url-box button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  align-self: flex-start;
 }
 </style>
