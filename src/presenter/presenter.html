@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>StageDeck Remote · 主持人控制台</title>
+    <link rel="stylesheet" href="/presenter/presenter.css" />
+  </head>
+  <body>
+    <!-- 顶部状态栏 -->
+    <header class="statusbar">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">连接中…</span>
+      <span class="sep">·</span>
+      <span id="latency">-- ms</span>
+      <span class="sep">·</span>
+      <span id="lock-text">已锁定</span>
+    </header>
+
+    <!-- 中间：PPT 预览（点击即发送归一化坐标） -->
+    <main class="stage">
+      <img id="preview" alt="PPT 预览" draggable="false" />
+      <div class="overlay" id="lock-overlay">已锁定 · 点击下方"释放控制"</div>
+    </main>
+
+    <!-- 底部大按钮 -->
+    <footer class="controls">
+      <button class="btn" data-action="prev">上一页</button>
+      <button class="btn" data-action="next">下一页</button>
+      <button class="btn btn-toggle" id="lock-btn" data-action="toggle-lock">释放控制</button>
+      <button class="btn" data-action="black">黑屏</button>
+      <button class="btn" data-action="restore">恢复</button>
+    </footer>
+
+    <script src="/presenter/presenter.js"></script>
+  </body>
+</html>

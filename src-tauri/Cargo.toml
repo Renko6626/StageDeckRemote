@@ -1,0 +1,45 @@
+[package]
+name = "stagedeck-remote"
+version = "0.1.0"
+description = "局域网 PPT 远程控制系统（导播端桌面应用）"
+authors = ["sunyunbo"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "stagedeck_remote_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 本地 Web 服务（主持人端 HTTP/WS API）
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
+
+# 截图编码
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+# token 生成
+rand = "0.8"
+
+# 原生 Win32 能力（枚举窗口 / 截图 / 模拟输入）仅在 Windows 下编译。
+# 非 Windows 目标走 #[cfg(not(windows))] 占位实现，便于在 Linux/macOS 上开发与编译服务层。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Gdi",
+] }
