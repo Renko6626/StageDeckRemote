@@ -21,6 +21,22 @@ impl std::fmt::Display for InputError {
 
 impl std::error::Error for InputError {}
 
+/// 把物理屏幕坐标换算为 SendInput 绝对坐标（虚拟桌面 0..=65535）。
+pub fn to_virtual_desktop_abs(
+    x: i32,
+    y: i32,
+    vleft: i32,
+    vtop: i32,
+    vwidth: i32,
+    vheight: i32,
+) -> (i32, i32) {
+    let w = (vwidth - 1).max(1) as i64;
+    let h = (vheight - 1).max(1) as i64;
+    let ax = ((x - vleft) as i64 * 65535 / w) as i32;
+    let ay = ((y - vtop) as i64 * 65535 / h) as i32;
+    (ax.clamp(0, 65535), ay.clamp(0, 65535))
+}
+
 #[cfg(windows)]
 mod imp {
     use super::InputError;
@@ -62,3 +78,27 @@ mod imp {
 }
 
 pub use imp::{click_screen, key_next, key_prev};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_monitor_corners() {
+        // 虚拟桌面 1920x1080，原点 (0,0)
+        assert_eq!(to_virtual_desktop_abs(0, 0, 0, 0, 1920, 1080), (0, 0));
+        assert_eq!(to_virtual_desktop_abs(1919, 1079, 0, 0, 1920, 1080), (65535, 65535));
+    }
+
+    #[test]
+    fn negative_origin_multimonitor() {
+        // 左侧副屏使虚拟桌面原点为负
+        assert_eq!(to_virtual_desktop_abs(-1920, 0, -1920, 0, 3840, 1080).0, 0);
+    }
+
+    #[test]
+    fn clamps_outside() {
+        let (ax, _) = to_virtual_desktop_abs(99999, 0, 0, 0, 1920, 1080);
+        assert_eq!(ax, 65535);
+    }
+}
