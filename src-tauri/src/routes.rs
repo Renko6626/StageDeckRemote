@@ -159,16 +159,20 @@ async fn click(State(state): State<Arc<AppState>>, Json(req): Json<ClickReq>) ->
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    // 读取目标窗口矩形并映射为屏幕坐标（spec §7.2）。
-    let win = {
+    // 取目标窗口 handle，再实时读取矩形（窗口可能已移动）。
+    let handle = {
         let i = state.inner.lock().expect("state lock poisoned");
-        i.selected_window.clone()
+        i.selected_window.as_ref().map(|w| w.handle)
     };
-    let Some(win) = win else {
+    let Some(handle) = handle else {
         return json_err(StatusCode::CONFLICT, "ppt_window_not_found");
     };
-    let screen_x = win.left + (req.x * win.width as f64).round() as i32;
-    let screen_y = win.top + (req.y * win.height as f64).round() as i32;
+    let Some(rect) = crate::window_manager::window_rect(handle) else {
+        return json_err(StatusCode::CONFLICT, "ppt_window_not_found");
+    };
+    let (screen_x, screen_y) = crate::window_manager::map_normalized_to_screen(
+        rect.left, rect.top, rect.width, rect.height, req.x, req.y,
+    );
 
     match input::click_screen(screen_x, screen_y) {
         Ok(()) => {
@@ -211,6 +215,13 @@ fn page_turn(state: &AppState, token: &Option<String>, forward: bool) -> Respons
     }
     if !state.button_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
+    }
+    // 翻页前激活目标窗口，确保按键送达放映窗口（spec §18.2）。
+    if let Some(handle) = {
+        let i = state.inner.lock().expect("state lock poisoned");
+        i.selected_window.as_ref().map(|w| w.handle)
+    } {
+        crate::window_manager::bring_to_front(handle);
     }
     let result = if forward { input::key_next() } else { input::key_prev() };
     match result {

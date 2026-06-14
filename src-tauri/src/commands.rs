@@ -96,13 +96,24 @@ pub fn force_lock(state: State<Arc<AppState>>, locked: bool) {
 }
 
 #[tauri::command]
-pub fn local_next() -> Result<(), String> {
+pub fn local_next(state: State<Arc<AppState>>) -> Result<(), String> {
+    activate_selected(&state);
     input::key_next().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn local_prev() -> Result<(), String> {
+pub fn local_prev(state: State<Arc<AppState>>) -> Result<(), String> {
+    activate_selected(&state);
     input::key_prev().map_err(|e| e.to_string())
+}
+
+/// 翻页前激活选中窗口（本地兜底翻页同样需要焦点）。
+fn activate_selected(state: &AppState) {
+    if let Ok(i) = state.inner.lock() {
+        if let Some(w) = i.selected_window.as_ref() {
+            window_manager::bring_to_front(w.handle);
+        }
+    }
 }
 
 #[tauri::command]
