@@ -22,6 +22,21 @@ impl std::fmt::Display for CaptureError {
     }
 }
 
+/// 把自上而下的 BGRA 像素转换为 RGB（丢弃 alpha）。
+pub fn bgra_to_rgb(bgra: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let px = (w as usize) * (h as usize);
+    let mut rgb = Vec::with_capacity(px * 3);
+    for i in 0..px {
+        let b = bgra.get(i * 4).copied().unwrap_or(0);
+        let g = bgra.get(i * 4 + 1).copied().unwrap_or(0);
+        let r = bgra.get(i * 4 + 2).copied().unwrap_or(0);
+        rgb.push(r);
+        rgb.push(g);
+        rgb.push(b);
+    }
+    rgb
+}
+
 /// 截取当前选中窗口；未选窗口时返回占位图，方便链路联调。
 pub fn snapshot_jpeg(
     state: &AppState,
@@ -85,4 +100,22 @@ fn placeholder_jpeg(w: u32, h: u32, quality: u8) -> Result<Vec<u8>, CaptureError
         .write_image(img.as_raw(), w, h, ExtendedColorType::Rgb8)
         .map_err(|e| CaptureError::Encode(e.to_string()))?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_bgra_to_rgb_swapping_channels() {
+        // 1 像素 BGRA = (B=10, G=20, R=30, A=255) → RGB (30,20,10)
+        let bgra = [10u8, 20, 30, 255];
+        assert_eq!(bgra_to_rgb(&bgra, 1, 1), vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn output_len_is_three_per_pixel() {
+        let bgra = vec![0u8; 4 * 6]; // 6 像素
+        assert_eq!(bgra_to_rgb(&bgra, 3, 2).len(), 3 * 6);
+    }
 }
