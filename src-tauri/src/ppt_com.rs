@@ -1,5 +1,28 @@
 //! PowerPoint COM 探测（VBA spike）。纯函数跨平台可测；COM 部分仅 Windows。
 
+use serde::Serialize;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SlideAction {
+    pub label: String,
+    pub macro_name: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SlideState {
+    pub available: bool,
+    pub in_show: bool,
+    pub current: i32,
+    pub total: i32,
+    pub actions: Vec<SlideAction>,
+}
+
+impl SlideState {
+    pub fn unavailable() -> Self {
+        SlideState { available: false, in_show: false, current: 0, total: 0, actions: Vec::new() }
+    }
+}
+
 /// 从一段 VBA 模块代码里抽出可调用的过程名（Sub / Function）。
 /// 忽略大小写与前导空白；忽略 Private；去重保序（大小写不敏感去重）。
 pub fn parse_macro_names(module_text: &str) -> Vec<String> {
@@ -119,6 +142,42 @@ mod com {
 
     pub fn call_void(disp: &IDispatch, name: &str, args: &[VARIANT]) -> Result<(), String> {
         invoke(disp, name, DISPATCH_METHOD, args).map(|_| ())
+    }
+
+    use windows::Win32::System::Com::DISPATCH_PROPERTYPUT;
+    const DISPID_PROPERTYPUT: i32 = -3;
+
+    /// 读字符串属性（无参 propertyget 返回 BSTR）。
+    pub fn get_str(disp: &IDispatch, name: &str) -> Result<String, String> {
+        call_str(disp, name, &[])
+    }
+
+    /// 写 i32 属性（PROPERTYPUT，如 View.State）。
+    pub fn set_i32(disp: &IDispatch, name: &str, value: i32) -> Result<(), String> {
+        unsafe {
+            let wname: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            let names = [PCWSTR(wname.as_ptr())];
+            let mut dispid: i32 = 0;
+            disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid)
+                .map_err(|e| format!("{name}: 找不到属性（{e}）"))?;
+            let mut argv = [VARIANT::from(value)];
+            let mut named = [DISPID_PROPERTYPUT];
+            let params = DISPPARAMS {
+                rgvarg: argv.as_mut_ptr(),
+                cArgs: 1,
+                rgdispidNamedArgs: named.as_mut_ptr(),
+                cNamedArgs: 1,
+            };
+            disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, None, None, None)
+                .map_err(|e| format!("{name}: 写属性失败（{e}）"))?;
+            Ok(())
+        }
+    }
+
+    /// 调方法返回 i32（带参或无参，METHOD|PROPERTYGET 双 flag）。
+    pub fn call_i32(disp: &IDispatch, name: &str, args: &[VARIANT]) -> Result<i32, String> {
+        let v = invoke(disp, name, DISPATCH_METHOD | DISPATCH_PROPERTYGET, args)?;
+        i32::try_from(&v).map_err(|e| format!("{name} 不是整数（{e}）"))
     }
 }
 
