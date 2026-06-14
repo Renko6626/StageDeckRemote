@@ -147,3 +147,9 @@ pub fn vba_list_macros() -> Result<Vec<String>, String> {
 pub fn vba_run_macro(name: String) -> Result<(), String> {
     crate::ppt_com::run_macro(&name)
 }
+
+/// 导播 GUI：读当前页状态（COM）。
+#[tauri::command]
+pub fn get_slide_state() -> crate::ppt_com::SlideState {
+    crate::ppt_com::slide_state().unwrap_or_else(|_| crate::ppt_com::SlideState::unavailable())
+}
