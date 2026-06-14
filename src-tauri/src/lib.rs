@@ -63,6 +63,8 @@ pub fn run() {
             commands::local_black,
             commands::local_restore,
             commands::get_logs,
+            commands::vba_list_macros,
+            commands::vba_run_macro,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

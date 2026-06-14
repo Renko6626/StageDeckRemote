@@ -135,3 +135,15 @@ pub fn get_logs(state: State<Arc<AppState>>) -> Vec<LogEntry> {
     let app: &AppState = &state;
     log::recent(app, 100)
 }
+
+/// 列出当前演示文稿的 VBA 宏名（导播专用，VBA spike）。
+#[tauri::command]
+pub fn vba_list_macros() -> Result<Vec<String>, String> {
+    crate::ppt_com::list_macros()
+}
+
+/// 触发一个 VBA 宏（导播专用，VBA spike）。
+#[tauri::command]
+pub fn vba_run_macro(name: String) -> Result<(), String> {
+    crate::ppt_com::run_macro(&name)
+}
