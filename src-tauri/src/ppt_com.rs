@@ -179,6 +179,50 @@ mod com {
         let v = invoke(disp, name, DISPATCH_METHOD | DISPATCH_PROPERTYGET, args)?;
         i32::try_from(&v).map_err(|e| format!("{name} 不是整数（{e}）"))
     }
+
+    /// 枚举一页的形状，取所有 ppActionRunMacro 绑定 → {label, macro}。
+    pub fn slide_actions(slide: &IDispatch) -> Vec<super::SlideAction> {
+        let mut out = Vec::new();
+        let shapes = match get_obj(slide, "Shapes") {
+            Ok(s) => s,
+            Err(_) => return out,
+        };
+        let count = get_i32(&shapes, "Count").unwrap_or(0);
+        for i in 1..=count {
+            let shape = match call_obj(&shapes, "Item", &[VARIANT::from(i)]) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            // ActionSettings(1=ppMouseClick).Action == 8=ppActionRunMacro
+            let acts = match call_obj(&shape, "ActionSettings", &[VARIANT::from(1i32)]) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let action = get_i32(&acts, "Action").unwrap_or(0);
+            if action == 8 {
+                let macro_name = get_str(&acts, "Run").unwrap_or_default();
+                if macro_name.is_empty() {
+                    continue;
+                }
+                let label = shape_label(&shape);
+                out.push(super::SlideAction { label, macro_name });
+            }
+        }
+        out
+    }
+
+    /// 形状标签：可见文字优先，空则用形状名。
+    fn shape_label(shape: &IDispatch) -> String {
+        let text = get_obj(shape, "TextFrame")
+            .and_then(|tf| get_obj(&tf, "TextRange"))
+            .and_then(|tr| get_str(&tr, "Text"))
+            .unwrap_or_default();
+        let text = text.trim().to_string();
+        if !text.is_empty() {
+            return text;
+        }
+        get_str(shape, "Name").unwrap_or_default()
+    }
 }
 
 /// 列出当前活动演示文稿里可调用的 VBA 宏名。
@@ -217,6 +261,43 @@ pub fn list_macros() -> Result<Vec<String>, String> {
 #[cfg(not(windows))]
 pub fn list_macros() -> Result<Vec<String>, String> {
     Err("仅 Windows 支持 PowerPoint COM".to_string())
+}
+
+/// 读取当前页状态 + 该页的宏绑定按钮。连不上 PowerPoint 时返回 available=false（不报错）。
+#[cfg(windows)]
+pub fn slide_state() -> Result<SlideState, String> {
+    let _co = com::ComGuard::init();
+    let app = match com::connect() {
+        Ok(a) => a,
+        Err(_) => return Ok(SlideState::unavailable()),
+    };
+    let pres = com::get_obj(&app, "ActivePresentation").map_err(|_| "没有活动演示文稿".to_string())?;
+    let slides = com::get_obj(&pres, "Slides")?;
+    let total = com::get_i32(&slides, "Count").unwrap_or(0);
+
+    // 当前页：优先放映视图，否则编辑视图。
+    let shows = com::get_obj(&app, "SlideShowWindows")?;
+    let show_count = com::get_i32(&shows, "Count").unwrap_or(0);
+    let (in_show, slide) = if show_count >= 1 {
+        let win = com::call_obj(&shows, "Item", &[windows::core::VARIANT::from(1i32)])?;
+        let view = com::get_obj(&win, "View")?;
+        let slide = com::get_obj(&view, "Slide")?;
+        (true, slide)
+    } else {
+        let win = com::get_obj(&app, "ActiveWindow")?;
+        let view = com::get_obj(&win, "View")?;
+        let slide = com::get_obj(&view, "Slide")?;
+        (false, slide)
+    };
+    let current = com::get_i32(&slide, "SlideIndex").unwrap_or(0);
+
+    let actions = com::slide_actions(&slide);
+    Ok(SlideState { available: true, in_show, current, total, actions })
+}
+
+#[cfg(not(windows))]
+pub fn slide_state() -> Result<SlideState, String> {
+    Ok(SlideState::unavailable())
 }
 
 /// 触发一个 VBA 宏（Application.Run）。
