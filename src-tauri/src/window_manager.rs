@@ -197,4 +197,13 @@ mod tests {
     fn accepts_normal_window() {
         assert!(is_capturable_window("活动答题.pptx - PowerPoint", 0, 0, 1920, 1080));
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn enumerate_returns_some_visible_windows() {
+        // 桌面上通常存在可见有标题窗口（如资源管理器/终端）。
+        let wins = list_windows();
+        assert!(wins.iter().all(|w| !w.title.trim().is_empty()));
+        assert!(wins.iter().all(|w| w.width >= 100 && w.height >= 100));
+    }
 }
