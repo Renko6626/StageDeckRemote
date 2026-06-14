@@ -5,8 +5,7 @@
 <template>
   <div class="app">
     <header class="topbar">
-      <strong>StageDeck Remote</strong>
-      <span class="subtitle">导播端控制台</span>
+      <strong class="brand">STAGEDECK<span class="brand-sub">&nbsp;·&nbsp;DIRECTOR</span></strong>
     </header>
     <router-view />
   </div>
@@ -14,70 +13,118 @@
 
 <style>
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #e9e9f0;
-  background: #0e0e12;
+  --bg: #0a0a0b;
+  --panel: #0e0e10;
+  --panel-2: #131316;
+  --line: #26262b;
+  --line-hi: #3a3a42;
+  --ink: #ededee;
+  --ink-dim: #8b8b93;
+  --ink-faint: #5a5a62;
+  --danger: #d23b3b;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono",
+    "Segoe UI Mono", Menlo, Consolas, monospace;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.16;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .app {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
 }
 
 .topbar {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 12px 18px;
-  background: #15151c;
-  border-bottom: 1px solid #26262f;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line-hi);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
-.topbar .subtitle {
-  font-size: 13px;
-  opacity: 0.55;
+
+.topbar .brand {
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink);
+}
+
+.topbar .brand-sub {
+  color: var(--ink-faint);
+  font-weight: 400;
 }
 
 .card {
-  background: #16161d;
-  border: 1px solid #26262f;
-  border-radius: 14px;
-  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px 16px;
 }
+
 .card h2 {
   margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-  opacity: 0.85;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
 }
 
 button {
   appearance: none;
-  border: 1px solid #33333f;
-  background: #232330;
-  color: #e9e9f0;
-  border-radius: 9px;
+  border: 1px solid var(--line-hi);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 0;
   padding: 9px 12px;
   font-size: 14px;
-  font-family: inherit;
+  font-family: var(--sans);
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.06s linear, color 0.06s linear, border-color 0.06s linear;
 }
+
 button:hover:not(:disabled) {
-  background: #2c2c3b;
-  border-color: #44445a;
+  background: var(--panel-2);
+  border-color: var(--ink-dim);
 }
+
 button:active:not(:disabled) {
-  background: #1d1d28;
+  background: var(--ink);
+  color: #000;
+  border-color: var(--ink);
 }
+
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 </style>
