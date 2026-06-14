@@ -55,9 +55,11 @@ pub fn list_windows() -> Vec<TargetWindow> {
 pub fn auto_detect_ppt(state: State<Arc<AppState>>) -> Option<TargetWindow> {
     let found = window_manager::find_powerpoint();
     if let Some(win) = found.clone() {
+        let handle = win.handle;
         if let Ok(mut i) = state.inner.lock() {
             i.selected_window = Some(win);
         }
+        state.capture.start(handle);
         log::event(&state, "自动识别到 PowerPoint 放映窗口");
     }
     found
@@ -66,9 +68,11 @@ pub fn auto_detect_ppt(state: State<Arc<AppState>>) -> Option<TargetWindow> {
 #[tauri::command]
 pub fn select_window(state: State<Arc<AppState>>, window: TargetWindow) {
     let title = window.title.clone();
+    let handle = window.handle;
     if let Ok(mut i) = state.inner.lock() {
         i.selected_window = Some(window);
     }
+    state.capture.start(handle);
     log::event(&state, format!("已选择窗口：{title}"));
 }
 
