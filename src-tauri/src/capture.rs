@@ -7,6 +7,7 @@ use image::{
     codecs::jpeg::JpegEncoder, imageops::FilterType, ExtendedColorType, ImageBuffer, ImageEncoder,
     Rgb, RgbImage,
 };
+use std::sync::{Arc, Mutex};
 
 use crate::app_state::{AppState, TargetWindow};
 
@@ -81,6 +82,41 @@ pub struct CapturedFrame {
     pub bgra: Vec<u8>,
     pub width: u32,
     pub height: u32,
+}
+
+/// 管理 WGC 后台捕获会话与最新帧缓冲。存于 AppState，被 snapshot 读、被选窗启停。
+pub struct CaptureManager {
+    /// 后台会话写入的最新一帧；snapshot 读取。
+    latest: Arc<Mutex<Option<CapturedFrame>>>,
+}
+
+impl CaptureManager {
+    pub fn new() -> Self {
+        Self { latest: Arc::new(Mutex::new(None)) }
+    }
+
+    /// 取最新帧的克隆（无则 None → snapshot 回退）。
+    pub fn latest_frame(&self) -> Option<CapturedFrame> {
+        self.latest.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// 对指定窗口启动捕获会话（停旧、清最新帧）。WGC 接入在后续任务填充。
+    pub fn start(&self, hwnd: isize) {
+        self.stop();
+        if let Ok(mut g) = self.latest.lock() {
+            *g = None;
+        }
+        let _ = hwnd;
+    }
+
+    /// 停止当前会话。WGC 接入在后续任务填充。
+    pub fn stop(&self) {}
+}
+
+impl Default for CaptureManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 把一帧 BGRA 编码为 JPEG（复用纯函数 bgra_to_rgb + encode_scaled_jpeg）。
@@ -251,5 +287,16 @@ mod tests {
         let jpeg = encode_captured_frame(&frame, 1280, 720, 80).unwrap();
         let decoded = image::load_from_memory(&jpeg).unwrap().to_rgb8();
         assert_eq!((decoded.width(), decoded.height()), (2, 2));
+    }
+
+    #[test]
+    fn capture_manager_latest_frame_roundtrip() {
+        let mgr = CaptureManager::new();
+        assert!(mgr.latest_frame().is_none());
+        // Write directly into the shared buffer (test is in-module → can access private field)
+        *mgr.latest.lock().unwrap() = Some(CapturedFrame { bgra: vec![1, 2, 3, 4], width: 1, height: 1 });
+        let f = mgr.latest_frame().unwrap();
+        assert_eq!((f.width, f.height, f.bgra.len()), (1, 1, 4));
+        mgr.stop(); // no-op on non-Windows, must not panic
     }
 }
