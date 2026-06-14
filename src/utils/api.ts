@@ -28,6 +28,19 @@ export interface LogEntry {
   message: string;
 }
 
+export interface SlideAction {
+  label: string;
+  macro_name: string;
+}
+
+export interface SlideState {
+  available: boolean;
+  in_show: boolean;
+  current: number;
+  total: number;
+  actions: SlideAction[];
+}
+
 export const api = {
   getStatus: () => invoke<DirectorStatus>("get_status"),
   listWindows: () => invoke<TargetWindow[]>("list_windows"),
@@ -40,6 +53,5 @@ export const api = {
   localBlack: () => invoke<void>("local_black"),
   localRestore: () => invoke<void>("local_restore"),
   getLogs: () => invoke<LogEntry[]>("get_logs"),
-  vbaListMacros: () => invoke<string[]>("vba_list_macros"),
-  vbaRunMacro: (name: string) => invoke<void>("vba_run_macro", { name }),
+  getSlideState: () => invoke<SlideState>("get_slide_state"),
 };
