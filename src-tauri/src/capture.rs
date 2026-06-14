@@ -130,20 +130,24 @@ pub fn encode_captured_frame(
     encode_scaled_jpeg(&rgb, frame.width, frame.height, max_w, max_h, quality)
 }
 
-/// 截取当前选中窗口；未选窗口时返回占位图，方便链路联调。
+/// 优先返回 WGC 最新帧；无帧则回退 BitBlt（用 selected_window）；再不行占位图。
 pub fn snapshot_jpeg(
     state: &AppState,
     max_w: u32,
     max_h: u32,
     quality: u8,
 ) -> Result<Vec<u8>, CaptureError> {
+    // 1) WGC 最新帧
+    if let Some(frame) = state.capture.latest_frame() {
+        return encode_captured_frame(&frame, max_w, max_h, quality);
+    }
+    // 2) BitBlt 回退
     let window = state
         .inner
         .lock()
         .map_err(|_| CaptureError::Locked)?
         .selected_window
         .clone();
-
     match window {
         Some(win) => capture_window(&win, max_w, max_h, quality),
         None => placeholder_jpeg(max_w, max_h, quality),
@@ -298,5 +302,14 @@ mod tests {
         let f = mgr.latest_frame().unwrap();
         assert_eq!((f.width, f.height, f.bgra.len()), (1, 1, 4));
         mgr.stop(); // no-op on non-Windows, must not panic
+    }
+
+    #[test]
+    fn snapshot_falls_back_to_placeholder_when_empty() {
+        let state = crate::app_state::AppState::new("tok".into(), 8787);
+        // No WGC frame, no selected_window → placeholder (a valid JPEG)
+        let jpeg = snapshot_jpeg(&state, 1280, 720, 70).unwrap();
+        let decoded = image::load_from_memory(&jpeg).unwrap();
+        assert!(decoded.width() >= 16 && decoded.height() >= 16);
     }
 }

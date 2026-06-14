@@ -40,6 +40,7 @@ pub struct Inner {
 
 pub struct AppState {
     pub inner: Mutex<Inner>,
+    pub capture: crate::capture::CaptureManager,
 }
 
 impl AppState {
@@ -56,6 +57,7 @@ impl AppState {
                 server_port,
                 logs: Vec::new(),
             }),
+            capture: crate::capture::CaptureManager::new(),
         }
     }
 
