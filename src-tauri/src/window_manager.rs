@@ -21,6 +21,15 @@ pub fn map_normalized_to_screen(
     (sx, sy)
 }
 
+/// 枚举过滤判定：是否是值得列出的可截取窗口。纯函数，便于单测。
+pub fn is_capturable_window(title: &str, _style: u32, exstyle: u32, width: i32, height: i32) -> bool {
+    const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+    !title.trim().is_empty()
+        && (exstyle & WS_EX_TOOLWINDOW) == 0
+        && width >= 100
+        && height >= 100
+}
+
 #[cfg(windows)]
 mod imp {
     use super::TargetWindow;
@@ -100,5 +109,18 @@ mod tests {
     #[test]
     fn clamps_out_of_range() {
         assert_eq!(map_normalized_to_screen(0, 0, 1000, 1000, 1.5, -0.2), (1000, 0));
+    }
+
+    #[test]
+    fn rejects_empty_title_toolwindow_and_tiny() {
+        const TOOL: u32 = 0x0000_0080; // WS_EX_TOOLWINDOW
+        assert!(!is_capturable_window("", 0, 0, 800, 600)); // 空标题
+        assert!(!is_capturable_window("x", 0, TOOL, 800, 600)); // 工具窗
+        assert!(!is_capturable_window("x", 0, 0, 50, 50)); // 太小
+    }
+
+    #[test]
+    fn accepts_normal_window() {
+        assert!(is_capturable_window("活动答题.pptx - PowerPoint", 0, 0, 1920, 1080));
     }
 }
