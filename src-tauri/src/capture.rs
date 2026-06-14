@@ -1,9 +1,12 @@
 //! 截取目标窗口画面并编码为 JPEG（spec §11.7）。
 //!
-//! MVP 阶段：返回一张占位图，使"手机看到画面"这条链路在任何平台都能联调。
-//! 真实截图（Windows GDI / DXGI）在 `capture_window` 的 `#[cfg(windows)]` 分支中实现。
+//! MVP 阶段：未选窗口时返回占位图，使"手机看到画面"这条链路在任何平台都能联调。
+//! 真实截图（Windows GDI）在 `capture_window` 的 `#[cfg(windows)]` 分支中实现。
 
-use image::{codecs::jpeg::JpegEncoder, ExtendedColorType, ImageBuffer, ImageEncoder, Rgb};
+use image::{
+    codecs::jpeg::JpegEncoder, imageops::FilterType, ExtendedColorType, ImageBuffer, ImageEncoder,
+    Rgb, RgbImage,
+};
 
 use crate::app_state::{AppState, TargetWindow};
 
@@ -35,6 +38,41 @@ pub fn bgra_to_rgb(bgra: &[u8], w: u32, h: u32) -> Vec<u8> {
         rgb.push(b);
     }
     rgb
+}
+
+/// 等比缩放目标尺寸：超出界限则缩小，未超出则原样（不放大）。
+pub fn scaled_dims(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    if w <= max_w && h <= max_h {
+        return (w, h);
+    }
+    let r = (max_w as f64 / w as f64).min(max_h as f64 / h as f64);
+    let tw = ((w as f64 * r).round() as u32).max(1);
+    let th = ((h as f64 * r).round() as u32).max(1);
+    (tw, th)
+}
+
+/// 把 RGB 缓冲等比缩放到 ≤max 后编码为 JPEG。
+pub fn encode_scaled_jpeg(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    max_w: u32,
+    max_h: u32,
+    quality: u8,
+) -> Result<Vec<u8>, CaptureError> {
+    let img = RgbImage::from_raw(w, h, rgb.to_vec())
+        .ok_or_else(|| CaptureError::Encode("RGB 缓冲尺寸不匹配".into()))?;
+    let (tw, th) = scaled_dims(w, h, max_w, max_h);
+    let out = if (tw, th) == (w, h) {
+        img
+    } else {
+        image::imageops::resize(&img, tw, th, FilterType::Triangle)
+    };
+    let mut buf: Vec<u8> = Vec::new();
+    JpegEncoder::new_with_quality(&mut buf, quality)
+        .write_image(out.as_raw(), out.width(), out.height(), ExtendedColorType::Rgb8)
+        .map_err(|e| CaptureError::Encode(e.to_string()))?;
+    Ok(buf)
 }
 
 /// 截取当前选中窗口；未选窗口时返回占位图，方便链路联调。
@@ -94,12 +132,7 @@ fn placeholder_jpeg(w: u32, h: u32, quality: u8) -> Result<Vec<u8>, CaptureError
             Rgb([24, 24, 28])
         }
     });
-
-    let mut buf: Vec<u8> = Vec::new();
-    JpegEncoder::new_with_quality(&mut buf, quality)
-        .write_image(img.as_raw(), w, h, ExtendedColorType::Rgb8)
-        .map_err(|e| CaptureError::Encode(e.to_string()))?;
-    Ok(buf)
+    encode_scaled_jpeg(img.as_raw(), w, h, w, h, quality)
 }
 
 #[cfg(test)]
@@ -117,5 +150,21 @@ mod tests {
     fn output_len_is_three_per_pixel() {
         let bgra = vec![0u8; 4 * 6]; // 6 像素
         assert_eq!(bgra_to_rgb(&bgra, 3, 2).len(), 3 * 6);
+    }
+
+    #[test]
+    fn scaled_dims_keeps_aspect_within_bounds() {
+        assert_eq!(scaled_dims(1920, 1080, 1280, 720), (1280, 720));
+        assert_eq!(scaled_dims(800, 600, 1280, 720), (800, 600)); // 已在界限内不放大
+        assert_eq!(scaled_dims(2000, 1000, 1000, 1000), (1000, 500));
+    }
+
+    #[test]
+    fn encodes_decodable_jpeg_at_scaled_size() {
+        // 4x4 纯红 → 编码 → 用 image 解回，校验尺寸
+        let rgb = vec![255u8, 0, 0].repeat(16);
+        let jpeg = encode_scaled_jpeg(&rgb, 4, 4, 1280, 720, 80).unwrap();
+        let decoded = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        assert_eq!((decoded.width(), decoded.height()), (4, 4));
     }
 }
