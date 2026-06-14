@@ -88,11 +88,17 @@ pub struct CapturedFrame {
 pub struct CaptureManager {
     /// 后台会话写入的最新一帧；snapshot 读取。
     latest: Arc<Mutex<Option<CapturedFrame>>>,
+    #[cfg(windows)]
+    control: Mutex<Option<crate::capture_session::Control>>,
 }
 
 impl CaptureManager {
     pub fn new() -> Self {
-        Self { latest: Arc::new(Mutex::new(None)) }
+        Self {
+            latest: Arc::new(Mutex::new(None)),
+            #[cfg(windows)]
+            control: Mutex::new(None),
+        }
     }
 
     /// 取最新帧的克隆（无则 None → snapshot 回退）。
@@ -100,17 +106,41 @@ impl CaptureManager {
         self.latest.lock().ok().and_then(|g| g.clone())
     }
 
-    /// 对指定窗口启动捕获会话（停旧、清最新帧）。WGC 接入在后续任务填充。
+    /// 对指定窗口启动捕获会话（停旧、清最新帧）。
     pub fn start(&self, hwnd: isize) {
         self.stop();
         if let Ok(mut g) = self.latest.lock() {
             *g = None;
         }
-        let _ = hwnd;
+        #[cfg(windows)]
+        {
+            match crate::capture_session::start(hwnd, self.latest.clone()) {
+                Ok(ctrl) => {
+                    if let Ok(mut c) = self.control.lock() {
+                        *c = Some(ctrl);
+                    }
+                }
+                // 失败（旧系统/WGC 不可用）→ 不存句柄 → snapshot 自动回退 BitBlt。
+                Err(e) => eprintln!("[stagedeck] WGC 启动失败，回退 BitBlt：{e}"),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = hwnd;
+        }
     }
 
-    /// 停止当前会话。WGC 接入在后续任务填充。
-    pub fn stop(&self) {}
+    /// 停止当前会话。
+    pub fn stop(&self) {
+        #[cfg(windows)]
+        {
+            if let Ok(mut c) = self.control.lock() {
+                if let Some(ctrl) = c.take() {
+                    let _ = ctrl.stop();
+                }
+            }
+        }
+    }
 }
 
 impl Default for CaptureManager {
