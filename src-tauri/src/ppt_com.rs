@@ -44,7 +44,7 @@ mod com {
     const LOCALE_USER_DEFAULT: u32 = 0x0400;
     const IID_NULL: GUID = GUID::from_u128(0);
 
-    /// 进程级 COM 初始化守卫（每次命令调用一次）。
+    /// 线程级 COM 初始化守卫（每次命令调用一次）。
     pub struct ComGuard {
         uninit: bool,
     }
@@ -99,10 +99,7 @@ mod com {
 
     pub fn get_obj(disp: &IDispatch, name: &str) -> Result<IDispatch, String> {
         let v = invoke(disp, name, DISPATCH_PROPERTYGET, &[])?;
-        IUnknown::try_from(&v)
-            .map_err(|e| format!("{name} 不是对象（{e}）"))?
-            .cast::<IDispatch>()
-            .map_err(|e| e.to_string())
+        IDispatch::try_from(&v).map_err(|e| format!("{name} 不是对象（{e}）"))
     }
 
     pub fn get_i32(disp: &IDispatch, name: &str) -> Result<i32, String> {
@@ -112,10 +109,7 @@ mod com {
 
     pub fn call_obj(disp: &IDispatch, name: &str, args: &[VARIANT]) -> Result<IDispatch, String> {
         let v = invoke(disp, name, DISPATCH_METHOD | DISPATCH_PROPERTYGET, args)?;
-        IUnknown::try_from(&v)
-            .map_err(|e| format!("{name} 未返回对象（{e}）"))?
-            .cast::<IDispatch>()
-            .map_err(|e| e.to_string())
+        IDispatch::try_from(&v).map_err(|e| format!("{name} 未返回对象（{e}）"))
     }
 
     pub fn call_str(disp: &IDispatch, name: &str, args: &[VARIANT]) -> Result<String, String> {

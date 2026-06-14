@@ -2,7 +2,7 @@
 
 前置：
 1. PowerPoint 信任中心 → 宏设置 → 勾选「信任对 VBA 工程对象模型的访问」。
-2. 准备一个 `.pptm`，含几个公开命名 Sub（最好有可观察效果，如跳页/MsgBox）。
+2. 准备一个 `.pptm`，含几个公开命名 Sub（最好有可观察效果，如跳页/MsgBox）。（测试宏请放在标准模块 Module1 里；类模块 ThisPresentation/SlideN 里的宏需 "模块名.宏名" 限定名，本 spike 用非限定名。）
 3. 出 debug 安装包：`tauri build --debug --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis`，安装。
 
 验收：
