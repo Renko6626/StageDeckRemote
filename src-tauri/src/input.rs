@@ -39,24 +39,106 @@ pub fn to_virtual_desktop_abs(
 
 #[cfg(windows)]
 mod imp {
-    use super::InputError;
+    use super::{to_virtual_desktop_abs, InputError};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY,
+        VK_LEFT, VK_RIGHT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
 
-    /// 在屏幕坐标 (x, y) 处模拟一次左键单击。
+    fn send(inputs: &[INPUT]) -> Result<(), InputError> {
+        let sent = unsafe { SendInput(inputs, core::mem::size_of::<INPUT>() as i32) };
+        if sent as usize == inputs.len() {
+            Ok(())
+        } else {
+            Err(InputError::Failed("SendInput 注入数不足".into()))
+        }
+    }
+
+    fn mouse_abs(ax: i32, ay: i32, flags: u32) -> INPUT {
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: ax,
+                    dy: ay,
+                    mouseData: 0,
+                    dwFlags: MOUSE_EVENT_FLAGS(flags),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
     pub fn click_screen(x: i32, y: i32) -> Result<(), InputError> {
-        // TODO(windows): SetCursorPos(x, y) + SendInput(LEFTDOWN/LEFTUP)，
-        // 必要时点击前后保存/恢复鼠标位置（spec §11.8）。
-        let _ = (x, y);
+        unsafe {
+            // 记录当前鼠标位置以便还原。
+            let mut prev = POINT::default();
+            let _ = GetCursorPos(&mut prev);
+
+            let vleft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let vtop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let vwidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let vheight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            let (ax, ay) = to_virtual_desktop_abs(x, y, vleft, vtop, vwidth, vheight);
+
+            let move_flags =
+                MOUSEEVENTF_MOVE.0 | MOUSEEVENTF_ABSOLUTE.0 | MOUSEEVENTF_VIRTUALDESK.0;
+            let inputs = [
+                mouse_abs(ax, ay, move_flags),
+                mouse_abs(ax, ay, MOUSEEVENTF_LEFTDOWN.0),
+                mouse_abs(ax, ay, MOUSEEVENTF_LEFTUP.0),
+            ];
+            send(&inputs)?;
+
+            // 还原鼠标到原位（减小光标出现在观众屏的概率）。
+            let (rax, ray) = to_virtual_desktop_abs(prev.x, prev.y, vleft, vtop, vwidth, vheight);
+            let _ = send(&[mouse_abs(rax, ray, move_flags)]);
+        }
         Ok(())
+    }
+
+    fn key_press(vk: VIRTUAL_KEY) -> Result<(), InputError> {
+        let down = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS(0),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let up = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        send(&[down, up])
     }
 
     pub fn key_next() -> Result<(), InputError> {
-        // TODO(windows): SendInput VK_RIGHT（或 Space / PageDown）。
-        Ok(())
+        key_press(VK_RIGHT)
     }
 
     pub fn key_prev() -> Result<(), InputError> {
-        // TODO(windows): SendInput VK_LEFT（或 PageUp）。
-        Ok(())
+        key_press(VK_LEFT)
     }
 }
 
