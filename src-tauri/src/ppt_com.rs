@@ -313,6 +313,54 @@ pub fn run_macro(_name: &str) -> Result<(), String> {
     Err("仅 Windows 支持 PowerPoint COM".to_string())
 }
 
+/// 触发当前页的某个宏按钮（安全：仅允许当前页已枚举的宏）。
+#[cfg(windows)]
+pub fn trigger_action(macro_name: &str) -> Result<(), String> {
+    let state = slide_state()?;
+    if !state.actions.iter().any(|a| a.macro_name == macro_name) {
+        return Err(format!("宏不在当前页按钮中：{macro_name}"));
+    }
+    run_macro(macro_name)
+}
+
+/// 放映导航。
+#[cfg(windows)]
+fn show_view() -> Result<windows::Win32::System::Com::IDispatch, String> {
+    let app = com::connect()?;
+    let shows = com::get_obj(&app, "SlideShowWindows")?;
+    if com::get_i32(&shows, "Count").unwrap_or(0) < 1 {
+        return Err("当前没有放映".to_string());
+    }
+    let win = com::call_obj(&shows, "Item", &[windows::core::VARIANT::from(1i32)])?;
+    com::get_obj(&win, "View")
+}
+
+#[cfg(windows)]
+pub fn nav_next() -> Result<(), String> {
+    let _co = com::ComGuard::init();
+    com::call_void(&show_view()?, "Next", &[])
+}
+#[cfg(windows)]
+pub fn nav_prev() -> Result<(), String> {
+    let _co = com::ComGuard::init();
+    com::call_void(&show_view()?, "Previous", &[])
+}
+#[cfg(windows)]
+pub fn set_black(on: bool) -> Result<(), String> {
+    let _co = com::ComGuard::init();
+    // ppSlideShowBlackScreen=3, ppSlideShowRunning=1
+    com::set_i32(&show_view()?, "State", if on { 3 } else { 1 })
+}
+
+#[cfg(not(windows))]
+pub fn trigger_action(_macro_name: &str) -> Result<(), String> { Err("仅 Windows".into()) }
+#[cfg(not(windows))]
+pub fn nav_next() -> Result<(), String> { Err("仅 Windows".into()) }
+#[cfg(not(windows))]
+pub fn nav_prev() -> Result<(), String> { Err("仅 Windows".into()) }
+#[cfg(not(windows))]
+pub fn set_black(_on: bool) -> Result<(), String> { Err("仅 Windows".into()) }
+
 #[cfg(test)]
 mod tests {
     use super::*;
