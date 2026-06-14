@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::app_state::AppState;
-use crate::{auth, capture, input, log, obs};
+use crate::{auth, capture, input, log};
 
 // 主持人端静态资源在编译期内嵌，运行时由 Axum 直接吐出（开发/发布行为一致）。
 const PRESENTER_HTML: &str = include_str!("../../src/presenter/presenter.html");
@@ -41,6 +41,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/unlock", post(unlock))
         .route("/api/black", post(black))
         .route("/api/restore", post(restore))
+        .route("/api/slide_state", get(slide_state))
+        .route("/api/action", post(action))
         .with_state(state)
 }
 
@@ -216,14 +218,20 @@ fn page_turn(state: &AppState, token: &Option<String>, forward: bool) -> Respons
     if !state.button_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    // 翻页前激活目标窗口，确保按键送达放映窗口（spec §18.2）。
-    if let Some(handle) = {
-        let i = state.inner.lock().expect("state lock poisoned");
-        i.selected_window.as_ref().map(|w| w.handle)
-    } {
-        crate::window_manager::bring_to_front(handle);
-    }
-    let result = if forward { input::key_next() } else { input::key_prev() };
+    // COM 翻页优先；失败回退 SendInput（先置前窗口）。
+    let com_result = if forward { crate::ppt_com::nav_next() } else { crate::ppt_com::nav_prev() };
+    let result = match com_result {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            if let Some(handle) = {
+                let i = state.inner.lock().expect("state lock poisoned");
+                i.selected_window.as_ref().map(|w| w.handle)
+            } {
+                crate::window_manager::bring_to_front(handle);
+            }
+            if forward { input::key_next() } else { input::key_prev() }
+        }
+    };
     match result {
         Ok(()) => {
             log::event(state, if forward { "下一页" } else { "上一页" });
@@ -270,9 +278,9 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    match obs::black() {
+    match crate::ppt_com::set_black(true) {
         Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "obs_not_implemented"),
+        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "black_failed"),
     }
 }
 
@@ -280,8 +288,43 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    match obs::restore() {
+    match crate::ppt_com::set_black(false) {
         Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "obs_not_implemented"),
+        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "black_failed"),
+    }
+}
+
+async fn slide_state(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>) -> Response {
+    if !token_ok(&state, &q.token) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    let st = crate::ppt_com::slide_state().unwrap_or_else(|_| crate::ppt_com::SlideState::unavailable());
+    Json(st).into_response()
+}
+
+#[derive(Deserialize)]
+struct ActionReqBody {
+    token: Option<String>,
+    #[allow(dead_code)]
+    client_id: Option<String>,
+    r#macro: String,
+}
+
+async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBody>) -> Response {
+    if !token_ok(&state, &req.token) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !state.click_allowed() {
+        return json_err(StatusCode::FORBIDDEN, "control_locked");
+    }
+    match crate::ppt_com::trigger_action(&req.r#macro) {
+        Ok(()) => {
+            log::event(&state, format!("触发宏：{}", req.r#macro));
+            ok_json()
+        }
+        Err(e) => {
+            log::event(&state, format!("触发宏失败：{e}"));
+            json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed")
+        }
     }
 }
