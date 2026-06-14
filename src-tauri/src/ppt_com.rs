@@ -166,6 +166,19 @@ pub fn list_macros() -> Result<Vec<String>, String> {
     Err("仅 Windows 支持 PowerPoint COM".to_string())
 }
 
+/// 触发一个 VBA 宏（Application.Run）。
+#[cfg(windows)]
+pub fn run_macro(name: &str) -> Result<(), String> {
+    let _co = com::ComGuard::init();
+    let app = com::connect()?;
+    com::call_void(&app, "Run", &[windows::core::VARIANT::from(name)])
+}
+
+#[cfg(not(windows))]
+pub fn run_macro(_name: &str) -> Result<(), String> {
+    Err("仅 Windows 支持 PowerPoint COM".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
