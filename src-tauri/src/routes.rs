@@ -272,15 +272,18 @@ async fn unlock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) 
     ok_json()
 }
 
-// ---- OBS（P2，占位） ---------------------------------------------------------
+// ---- 黑屏 / 恢复（COM：View.State） -----------------------------------------
 
 async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
+    if !state.button_allowed() {
+        return json_err(StatusCode::FORBIDDEN, "control_locked");
+    }
     match crate::ppt_com::set_black(true) {
         Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "black_failed"),
+        Err(_) => json_err(StatusCode::SERVICE_UNAVAILABLE, "black_failed"),
     }
 }
 
@@ -288,9 +291,12 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
+    if !state.button_allowed() {
+        return json_err(StatusCode::FORBIDDEN, "control_locked");
+    }
     match crate::ppt_com::set_black(false) {
         Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::NOT_IMPLEMENTED, "black_failed"),
+        Err(_) => json_err(StatusCode::SERVICE_UNAVAILABLE, "restore_failed"),
     }
 }
 

@@ -174,7 +174,8 @@ mod com {
         }
     }
 
-    /// 调方法返回 i32（带参或无参，METHOD|PROPERTYGET 双 flag）。
+    /// 调方法返回 i32（带参或无参，METHOD|PROPERTYGET 双 flag）。预留：当前未用。
+    #[allow(dead_code)]
     pub fn call_i32(disp: &IDispatch, name: &str, args: &[VARIANT]) -> Result<i32, String> {
         let v = invoke(disp, name, DISPATCH_METHOD | DISPATCH_PROPERTYGET, args)?;
         i32::try_from(&v).map_err(|e| format!("{name} 不是整数（{e}）"))
