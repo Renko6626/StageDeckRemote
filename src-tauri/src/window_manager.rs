@@ -5,6 +5,22 @@
 
 use crate::app_state::TargetWindow;
 
+/// 把归一化坐标 (x,y)∈[0,1] 映射为窗口矩形内的屏幕坐标（物理像素）。
+pub fn map_normalized_to_screen(
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+    x: f64,
+    y: f64,
+) -> (i32, i32) {
+    let cx = x.clamp(0.0, 1.0);
+    let cy = y.clamp(0.0, 1.0);
+    let sx = left + (cx * width as f64).round() as i32;
+    let sy = top + (cy * height as f64).round() as i32;
+    (sx, sy)
+}
+
 #[cfg(windows)]
 mod imp {
     use super::TargetWindow;
@@ -63,3 +79,26 @@ mod imp {
 }
 
 pub use imp::{bring_to_front, find_powerpoint, list_windows, window_exists, window_rect};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_center_and_corners() {
+        // 1920x1080 窗口在 (0,0)
+        assert_eq!(map_normalized_to_screen(0, 0, 1920, 1080, 0.0, 0.0), (0, 0));
+        assert_eq!(map_normalized_to_screen(0, 0, 1920, 1080, 1.0, 1.0), (1920, 1080));
+        assert_eq!(map_normalized_to_screen(0, 0, 1920, 1080, 0.5, 0.5), (960, 540));
+    }
+
+    #[test]
+    fn applies_window_offset() {
+        assert_eq!(map_normalized_to_screen(100, 200, 800, 600, 0.5, 0.5), (500, 500));
+    }
+
+    #[test]
+    fn clamps_out_of_range() {
+        assert_eq!(map_normalized_to_screen(0, 0, 1000, 1000, 1.5, -0.2), (1000, 0));
+    }
+}
