@@ -6,6 +6,8 @@
 mod app_state;
 mod auth;
 mod capture;
+#[cfg(windows)]
+mod capture_session;
 mod commands;
 mod config;
 mod input;
