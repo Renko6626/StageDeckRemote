@@ -1,7 +1,7 @@
 //! 截取目标窗口画面并编码为 JPEG（spec §11.7）。
 //!
 //! MVP 阶段：未选窗口时返回占位图，使"手机看到画面"这条链路在任何平台都能联调。
-//! 真实截图（Windows GDI）在 `capture_window` 的 `#[cfg(windows)]` 分支中实现。
+//! Windows 下用屏幕 DC `BitBlt` 截取窗口实时客户区矩形（截观众所见、避开逐窗口黑帧）。
 
 use image::{
     codecs::jpeg::JpegEncoder, imageops::FilterType, ExtendedColorType, ImageBuffer, ImageEncoder,
@@ -102,10 +102,67 @@ fn capture_window(
     max_h: u32,
     quality: u8,
 ) -> Result<Vec<u8>, CaptureError> {
-    // TODO(windows): 用 PrintWindow / BitBlt 截取 win.handle (HWND) 客户区，
-    // 缩放到 max_w×max_h 后编码为 JPEG。当前先返回占位图。
-    let _ = win;
-    placeholder_jpeg(max_w, max_h, quality)
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        HGDIOBJ, SRCCOPY,
+    };
+
+    // 实时矩形：窗口可能已移动/关闭。
+    let rect = crate::window_manager::window_rect(win.handle)
+        .ok_or_else(|| CaptureError::Encode("窗口已不存在".into()))?;
+    let (left, top, width, height) = (rect.left, rect.top, rect.width, rect.height);
+    if width <= 0 || height <= 0 {
+        return Err(CaptureError::Encode("窗口尺寸非法".into()));
+    }
+
+    unsafe {
+        // 屏幕 DC（整个桌面），从中 BitBlt 出窗口所在矩形。
+        let screen_dc = GetDC(HWND::default());
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        let bmp = CreateCompatibleBitmap(screen_dc, width, height);
+        let old = SelectObject(mem_dc, HGDIOBJ(bmp.0));
+
+        let ok = BitBlt(mem_dc, 0, 0, width, height, screen_dc, left, top, SRCCOPY).is_ok();
+
+        // 取出像素为自上而下的 32 位 BGRA。
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: core::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // 负 = top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+        let scanlines = GetDIBits(
+            mem_dc,
+            bmp,
+            0,
+            height as u32,
+            Some(pixels.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        // 清理 GDI 资源。
+        SelectObject(mem_dc, old);
+        let _ = DeleteObject(HGDIOBJ(bmp.0));
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(HWND::default(), screen_dc);
+
+        if !ok || scanlines == 0 {
+            return Err(CaptureError::Encode("BitBlt/GetDIBits 失败".into()));
+        }
+
+        let rgb = bgra_to_rgb(&pixels, width as u32, height as u32);
+        encode_scaled_jpeg(&rgb, width as u32, height as u32, max_w, max_h, quality)
+    }
 }
 
 #[cfg(not(windows))]
