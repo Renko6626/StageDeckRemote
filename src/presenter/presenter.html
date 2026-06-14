@@ -4,37 +4,77 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>StageDeck Remote · 主持人控制台</title>
+    <title>STAGEDECK — PRESENTER</title>
     <link rel="stylesheet" href="/presenter/presenter.css" />
   </head>
   <body>
-    <!-- 顶部状态栏 -->
-    <header class="statusbar">
-      <span class="dot" id="conn-dot"></span>
-      <span id="conn-text">连接中…</span>
-      <span class="sep">·</span>
-      <span id="latency">-- ms</span>
-      <span class="sep">·</span>
-      <span id="lock-text">已锁定</span>
-    </header>
+    <div class="frame">
+      <!-- ─── status bar ─── -->
+      <header class="statusbar">
+        <span class="brand">STAGEDECK<span class="brand-sub">·PRESENTER</span></span>
+        <span class="status-grid">
+          <span class="stat"><span class="dot" id="conn-dot"></span><b id="conn-text">LINK…</b></span>
+          <span class="stat">LAT <b id="latency">--</b></span>
+          <span class="stat">PG <b id="slide-pos">--/--</b></span>
+          <span class="stat" id="lock-stat">LOCK</span>
+        </span>
+      </header>
 
-    <!-- 中间：PPT 预览（点击即发送归一化坐标） -->
-    <main class="stage">
-      <img id="preview" alt="PPT 预览" draggable="false" />
-      <div class="overlay" id="lock-overlay">已锁定 · 点击下方"释放控制"</div>
-    </main>
+      <!-- ─── mode switch ─── -->
+      <nav class="modeswitch">
+        <button class="mode active" data-mode="main">主控 · MAIN</button>
+        <button class="mode" data-mode="sync">屏幕 · SYNC</button>
+      </nav>
 
-    <!-- 底部大按钮 -->
-    <footer class="controls">
-      <button class="btn" data-action="prev">上一页</button>
-      <button class="btn" data-action="next">下一页</button>
-      <button class="btn btn-toggle" id="lock-btn" data-action="toggle-lock">释放控制</button>
-      <button class="btn" data-action="black">黑屏</button>
-      <button class="btn" data-action="restore">恢复</button>
-    </footer>
+      <!-- ─── MAIN: COM control ─── -->
+      <main class="page page-main active" id="page-main">
+        <section class="readout">
+          <span class="readout-k">SLIDE</span>
+          <span class="readout-v" id="slide-big">--</span>
+          <span class="readout-k">/ <span id="slide-total">--</span></span>
+          <span class="show-flag" id="show-flag">IDLE</span>
+        </section>
 
+        <section class="actions-wrap">
+          <div class="section-label">页内动作 · ACTIONS</div>
+          <div class="actions" id="actions"></div>
+          <div class="empty" id="actions-empty">无可触发动作 / 切到 SYNC 用坐标点击</div>
+          <div class="unavail" id="com-unavail" hidden>
+            COM 不可用<br /><span>PowerPoint 未连接 — 请切到 SYNC 屏幕同步</span>
+          </div>
+        </section>
+
+        <footer class="transport">
+          <button class="t-btn" data-action="prev"><span>◄</span>上一页</button>
+          <button class="t-btn t-black" data-action="black">黑屏</button>
+          <button class="t-btn" data-action="restore">恢复</button>
+          <button class="t-btn" data-action="next">下一页<span>►</span></button>
+        </footer>
+      </main>
+
+      <!-- ─── SYNC: screenshot fallback ─── -->
+      <main class="page page-sync" id="page-sync">
+        <section class="stage">
+          <img id="preview" alt="PPT" draggable="false" />
+          <div class="overlay" id="lock-overlay">已锁定 · 点「释放控制」</div>
+          <div class="reticle tl"></div><div class="reticle tr"></div>
+          <div class="reticle bl"></div><div class="reticle br"></div>
+        </section>
+        <footer class="transport">
+          <button class="t-btn" data-action="prev"><span>◄</span>上一页</button>
+          <button class="t-btn t-black" data-action="black">黑屏</button>
+          <button class="t-btn" data-action="restore">恢复</button>
+          <button class="t-btn" data-action="next">下一页<span>►</span></button>
+        </footer>
+      </main>
+
+      <!-- ─── arm bar (shared) ─── -->
+      <div class="armbar">
+        <button class="arm" id="lock-btn" data-action="toggle-lock">释放控制 · ARM</button>
+      </div>
+    </div>
     <script src="/presenter/presenter.js"></script>
   </body>
 </html>

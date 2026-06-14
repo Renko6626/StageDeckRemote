@@ -1,36 +1,46 @@
-// 主持人端控制逻辑（纯原生 JS，无构建步骤，Axum 直接吐出）。
-// 流程：轮询 /api/status 与 /api/snapshot.jpg，点击预览图发送归一化坐标。
-//
-// 设计要点（防误触）：所有按钮/点击的可用性由统一的 render() 根据
-// online + allowed(导播放行) + unlocked(本地解锁) 推导，任何状态变化都重绘，
-// 不让"断线还能点""远程已关按钮却亮着"这类不一致出现。
+// STAGEDECK · PRESENTER — two-mode controller (vanilla, no build; Axum serves this).
+// MAIN = COM control (per-slide macro buttons + transport). SYNC = screenshot + tap fallback.
+// All DOM mutation goes through render(); state is the single source of truth (防误触).
 (function () {
   "use strict";
 
   var token = new URLSearchParams(location.search).get("token") || "";
-  var SNAPSHOT_MIN_INTERVAL = 300; // 两帧之间至少间隔（ms）
-  var STATUS_INTERVAL = 1000;
+  var SNAPSHOT_MIN = 300; // ms between snapshot frames
+  var POLL = 900; // ms status + slide_state cadence
 
   var el = {
     connDot: document.getElementById("conn-dot"),
     connText: document.getElementById("conn-text"),
     latency: document.getElementById("latency"),
-    lockText: document.getElementById("lock-text"),
+    slidePos: document.getElementById("slide-pos"),
+    lockStat: document.getElementById("lock-stat"),
+    slideBig: document.getElementById("slide-big"),
+    slideTotal: document.getElementById("slide-total"),
+    showFlag: document.getElementById("show-flag"),
+    actions: document.getElementById("actions"),
+    actionsEmpty: document.getElementById("actions-empty"),
+    comUnavail: document.getElementById("com-unavail"),
     preview: document.getElementById("preview"),
     overlay: document.getElementById("lock-overlay"),
     lockBtn: document.getElementById("lock-btn"),
-    buttons: Array.prototype.slice.call(document.querySelectorAll(".btn")),
+    pageMain: document.getElementById("page-main"),
+    pageSync: document.getElementById("page-sync"),
+    modes: Array.prototype.slice.call(document.querySelectorAll(".mode")),
+    tbtns: Array.prototype.slice.call(document.querySelectorAll(".t-btn")),
   };
 
   var state = {
     online: false,
-    allowed: false, // 导播放行：remote_enabled && !control_locked
-    unlocked: false, // 主持人本地解锁后才能点预览
-    latency: null,
     connecting: true,
     tokenInvalid: false,
+    allowed: false, // remote_enabled && !control_locked
+    unlocked: false, // presenter_unlocked
+    latency: null,
+    mode: "main",
+    com: { available: false, in_show: false, current: 0, total: 0, actions: [] },
     statusTimer: null,
   };
+  var lastActionsKey = ""; // to avoid rebuilding the grid every tick
 
   function api(path, body) {
     var opts = body
@@ -43,137 +53,199 @@
     return fetch(path, opts);
   }
 
-  // ---- 统一渲染：唯一改动 DOM 的地方 ----
+  // ── gating ──
+  function canAct() {
+    return state.online && state.allowed && state.unlocked;
+  }
+  function canTransport() {
+    return state.online && state.allowed;
+  }
+
+  // ── render: single DOM update point ──
   function render() {
     el.connDot.classList.toggle("online", state.online);
     el.connText.textContent = state.tokenInvalid
-      ? "token 无效"
+      ? "TOKEN✗"
       : state.online
-        ? "已连接"
+        ? "LINK"
         : state.connecting
-          ? "连接中…"
-          : "已断开";
-    el.latency.textContent = state.latency == null ? "-- ms" : state.latency + " ms";
+          ? "LINK…"
+          : "DOWN";
+    el.latency.textContent = state.latency == null ? "--" : state.latency + "ms";
 
-    // 锁定状态 + 遮罩
-    el.lockText.textContent = state.unlocked ? "可控制" : "已锁定";
-    el.overlay.classList.toggle("hidden", state.unlocked);
+    var cur = state.com.current || 0;
+    var tot = state.com.total || 0;
+    el.slidePos.textContent = (cur || "--") + "/" + (tot || "--");
+    el.slideBig.textContent = cur ? String(cur).padStart(2, "0") : "--";
+    el.slideTotal.textContent = tot || "--";
+    el.showFlag.textContent = state.com.in_show ? "LIVE" : "IDLE";
+    el.showFlag.classList.toggle("live", state.com.in_show);
+
+    // lock chip + overlay + arm
+    var armed = state.unlocked;
+    el.lockStat.textContent = armed ? "ARMED" : "LOCK";
+    el.lockStat.classList.toggle("armed", armed);
+    el.overlay.classList.toggle("hidden", armed);
     el.overlay.textContent = state.online
-      ? '已锁定 · 点击下方"释放控制"'
+      ? '已锁定 · 点「释放控制」'
       : state.tokenInvalid
-        ? "token 无效，请用正确链接重新打开"
+        ? "TOKEN 无效"
         : "连接已断开";
-    el.lockBtn.textContent = state.unlocked ? "锁定" : "释放控制";
-    el.lockBtn.classList.toggle("unlocked", state.unlocked);
+    el.lockBtn.textContent = armed ? "锁定 · DISARM" : "释放控制 · ARM";
+    el.lockBtn.classList.toggle("armed", armed);
+    el.lockBtn.disabled = !state.online || (!state.allowed && !state.unlocked);
 
-    // 按钮可用性
-    el.buttons.forEach(function (b) {
-      var action = b.getAttribute("data-action");
-      if (action === "toggle-lock") {
-        // 已解锁时随时能锁；未解锁时需在线且导播放行才能解锁。
-        b.disabled = !state.online || (!state.allowed && !state.unlocked);
-      } else {
-        // 翻页 / 黑屏 / 恢复：需在线且导播放行。
-        b.disabled = !state.online || !state.allowed;
-      }
+    // COM availability (main page)
+    var comUp = state.com.available;
+    el.comUnavail.hidden = comUp;
+    el.actions.hidden = !comUp;
+    el.actionsEmpty.hidden = !comUp || state.com.actions.length > 0;
+
+    // transport buttons
+    el.tbtns.forEach(function (b) {
+      b.disabled = !canTransport();
+    });
+
+    renderActions();
+  }
+
+  function renderActions() {
+    var actions = state.com.actions || [];
+    var key = actions.map(function (a) { return a.label + "|" + a.macro_name; }).join("¦");
+    if (key !== lastActionsKey) {
+      lastActionsKey = key;
+      el.actions.innerHTML = "";
+      actions.forEach(function (a) {
+        var b = document.createElement("button");
+        b.className = "act";
+        b.setAttribute("data-macro", a.macro_name);
+        b.setAttribute("data-run", a.macro_name);
+        b.textContent = a.label || a.macro_name;
+        el.actions.appendChild(b);
+      });
+    }
+    // enable/disable each tick (cheap)
+    var ok = canAct();
+    Array.prototype.forEach.call(el.actions.children, function (b) {
+      b.disabled = !ok;
     });
   }
 
-  function setDisconnected(tokenInvalid) {
-    state.online = false;
-    state.connecting = false;
-    state.unlocked = false; // 安全：掉线立即视为锁定
-    state.allowed = false;
-    state.latency = null;
-    state.tokenInvalid = !!tokenInvalid;
-    render();
-  }
-
-  // ---- 状态轮询 ----
-  function pollStatus() {
+  // ── status + slide_state poll ──
+  function poll() {
     var t0 = Date.now();
-    api("/api/status?token=" + encodeURIComponent(token))
-      .then(function (r) {
-        if (r.status === 401) {
-          stopStatusPolling(); // token 无效，别再无限重试
-          setDisconnected(true);
-          return null;
-        }
-        if (!r.ok) throw new Error("status " + r.status);
-        return r.json();
+    Promise.all([
+      api("/api/status?token=" + encodeURIComponent(token)).then(handle401),
+      api("/api/slide_state?token=" + encodeURIComponent(token)).then(handle401),
+    ])
+      .then(function (rs) {
+        if (!rs[0] || !rs[1]) return; // 401 handled
+        return Promise.all([rs[0].json(), rs[1].json()]);
       })
-      .then(function (s) {
-        if (!s) return; // 401 已处理
+      .then(function (data) {
+        if (!data) return;
+        var s = data[0];
         state.online = true;
         state.connecting = false;
         state.tokenInvalid = false;
         state.latency = Date.now() - t0;
         state.allowed = s.remote_enabled && !s.control_locked;
         state.unlocked = state.allowed && s.presenter_unlocked;
+        state.com = data[1] || state.com;
         render();
       })
       .catch(function () {
-        setDisconnected(false);
+        setDown(false);
       });
   }
-
-  function startStatusPolling() {
-    if (!state.statusTimer) state.statusTimer = setInterval(pollStatus, STATUS_INTERVAL);
+  function handle401(r) {
+    if (r.status === 401) {
+      stopPolling();
+      setDown(true);
+      return null;
+    }
+    return r;
   }
-  function stopStatusPolling() {
+  function setDown(tokenInvalid) {
+    state.online = false;
+    state.connecting = false;
+    state.unlocked = false;
+    state.allowed = false;
+    state.latency = null;
+    state.tokenInvalid = !!tokenInvalid;
+    render();
+  }
+  function startPolling() {
+    if (!state.statusTimer) state.statusTimer = setInterval(poll, POLL);
+  }
+  function stopPolling() {
     if (state.statusTimer) {
       clearInterval(state.statusTimer);
       state.statusTimer = null;
     }
   }
 
-  // ---- 预览链式刷新：上一帧 load/error 后才排下一帧，自然限流 ----
+  // ── snapshot chain (SYNC) ──
   function loadFrame() {
     if (state.tokenInvalid) return;
     el.preview.src = "/api/snapshot.jpg?token=" + encodeURIComponent(token) + "&t=" + Date.now();
   }
   el.preview.addEventListener("load", function () {
-    if (!state.tokenInvalid) setTimeout(loadFrame, SNAPSHOT_MIN_INTERVAL);
+    if (state.mode === "sync" && !state.tokenInvalid) setTimeout(loadFrame, SNAPSHOT_MIN);
   });
   el.preview.addEventListener("error", function () {
-    // 截图失败（含断线 / 401）：放慢重试，避免破图狂刷。
-    if (!state.tokenInvalid) setTimeout(loadFrame, 1000);
+    if (state.mode === "sync" && !state.tokenInvalid) setTimeout(loadFrame, 1000);
   });
 
-  // ---- 点击预览图 → 归一化坐标 → /api/click（spec §6.2.2 / §7） ----
+  // ── mode switch ──
+  el.modes.forEach(function (m) {
+    m.addEventListener("click", function () {
+      var mode = m.getAttribute("data-mode");
+      if (mode === state.mode) return;
+      state.mode = mode;
+      el.modes.forEach(function (x) { x.classList.toggle("active", x === m); });
+      el.pageMain.classList.toggle("active", mode === "main");
+      el.pageSync.classList.toggle("active", mode === "sync");
+      if (mode === "sync") loadFrame(); // (re)start the snapshot chain
+    });
+  });
+
+  // ── macro action buttons (delegated) ──
+  el.actions.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".act");
+    if (!b || b.disabled) return;
+    var macro = b.getAttribute("data-run");
+    api("/api/action", { macro: macro }).then(poll).catch(function () {});
+  });
+
+  // ── transport (both pages, delegated on body) ──
+  var ACT = { prev: "/api/prev", next: "/api/next", black: "/api/black", restore: "/api/restore" };
+  document.body.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".t-btn");
+    if (!b || b.disabled) return;
+    var a = b.getAttribute("data-action");
+    if (ACT[a]) api(ACT[a], {}).catch(function () {});
+  });
+
+  // ── arm / lock ──
+  el.lockBtn.addEventListener("click", function () {
+    if (el.lockBtn.disabled) return;
+    api(state.unlocked ? "/api/lock" : "/api/unlock", {}).then(poll).catch(function () {});
+  });
+
+  // ── preview tap → normalized click (SYNC) ──
   el.preview.addEventListener("click", function (ev) {
-    if (!state.online || !state.unlocked) return;
-    var rect = el.preview.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    var x = (ev.clientX - rect.left) / rect.width;
-    var y = (ev.clientY - rect.top) / rect.height;
+    if (!canAct()) return;
+    var r = el.preview.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    var x = (ev.clientX - r.left) / r.width;
+    var y = (ev.clientY - r.top) / r.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
     api("/api/click", { x: x, y: y }).catch(function () {});
   });
 
-  // ---- 底部按钮 ----
-  var ACTIONS = {
-    prev: "/api/prev",
-    next: "/api/next",
-    black: "/api/black",
-    restore: "/api/restore",
-  };
-  document.querySelector(".controls").addEventListener("click", function (ev) {
-    var btn = ev.target.closest(".btn");
-    if (!btn || btn.disabled) return;
-    var action = btn.getAttribute("data-action");
-    if (action === "toggle-lock") {
-      api(state.unlocked ? "/api/lock" : "/api/unlock", {})
-        .then(pollStatus)
-        .catch(function () {});
-      return;
-    }
-    if (ACTIONS[action]) api(ACTIONS[action], {}).catch(function () {});
-  });
-
-  // ---- 启动 ----
+  // ── boot ──
   render();
-  loadFrame();
-  pollStatus();
-  startStatusPolling();
+  poll();
+  startPolling();
 })();
