@@ -38,23 +38,38 @@ function fmtTime(ms: number): string {
   padding: 0;
   max-height: 220px;
   overflow: auto;
-  font-size: 13px;
 }
+
 .log li {
   display: flex;
-  gap: 8px;
-  padding: 3px 0;
-  border-bottom: 1px solid #23232b;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
 }
+
+.log li:last-child {
+  border-bottom: none;
+}
+
 .t {
-  opacity: 0.5;
-  font-family: ui-monospace, monospace;
   flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
+
 .m {
+  color: var(--ink-dim);
   word-break: break-all;
 }
+
 .empty {
-  opacity: 0.4;
+  color: var(--ink-faint);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 </style>
