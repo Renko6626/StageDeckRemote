@@ -63,23 +63,49 @@ const canControl = computed(
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
+
 .status li {
   display: flex;
   justify-content: space-between;
-  font-size: 14px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
 }
+
+.status li:last-child {
+  border-bottom: none;
+}
+
 .k {
-  opacity: 0.7;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
 }
+
+.v {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+}
+
+/* ok = white (active/connected/enabled) */
 .v.ok {
-  color: #34c759;
+  color: var(--ink);
 }
+
+/* bad = danger red (locked/disconnected) — only for hard-danger states */
 .v.bad {
-  color: #ff453a;
+  color: var(--danger);
 }
+
+/* warn = dim (not yet active but not dangerous) */
 .v.warn {
-  color: #ffb020;
+  color: var(--ink-dim);
 }
 </style>
