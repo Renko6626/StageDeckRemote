@@ -128,6 +128,44 @@ mod com {
     }
 }
 
+/// 列出当前活动演示文稿里可调用的 VBA 宏名。
+#[cfg(windows)]
+pub fn list_macros() -> Result<Vec<String>, String> {
+    let _co = com::ComGuard::init();
+    let app = com::connect()?;
+    let pres = com::get_obj(&app, "ActivePresentation")
+        .map_err(|_| "没有活动演示文稿（请打开一个 .pptm）".to_string())?;
+    let vbproj = com::get_obj(&pres, "VBProject").map_err(|_| {
+        "无法访问 VBProject：请在 PowerPoint 信任中心开启'信任对 VBA 工程对象模型的访问'。".to_string()
+    })?;
+    let comps = com::get_obj(&vbproj, "VBComponents")?;
+    let count = com::get_i32(&comps, "Count")?;
+    let mut names: Vec<String> = Vec::new();
+    for i in 1..=count {
+        let comp = com::call_obj(&comps, "Item", &[windows::core::VARIANT::from(i)])?;
+        let code = com::get_obj(&comp, "CodeModule")?;
+        let lines = com::get_i32(&code, "CountOfLines")?;
+        if lines > 0 {
+            let text = com::call_str(
+                &code,
+                "Lines",
+                &[windows::core::VARIANT::from(1i32), windows::core::VARIANT::from(lines)],
+            )?;
+            for n in parse_macro_names(&text) {
+                if !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                    names.push(n);
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
+#[cfg(not(windows))]
+pub fn list_macros() -> Result<Vec<String>, String> {
+    Err("仅 Windows 支持 PowerPoint COM".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
