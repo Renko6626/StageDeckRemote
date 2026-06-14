@@ -61,27 +61,50 @@ const restore = () => run(() => api.localRestore());
   gap: 8px;
   margin-bottom: 10px;
 }
+
 .big {
-  padding: 12px;
+  padding: 11px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   font-weight: 600;
+  width: 100%;
 }
+
+/* remote enabled = inverted (active/on state) */
 .big.on {
-  background: #1f6f43;
-  color: #fff;
+  background: var(--ink);
+  color: #000;
+  border-color: var(--ink);
 }
+
+/* force-lock active = danger red */
 .big.danger {
-  background: #8a2622;
+  background: var(--danger);
   color: #fff;
+  border-color: var(--danger);
 }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
+
+.grid button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 10px 8px;
+}
+
 .error {
   margin: 10px 0 0;
-  color: #ff453a;
-  font-size: 13px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
   word-break: break-all;
 }
 </style>
