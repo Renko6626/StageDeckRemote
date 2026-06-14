@@ -44,3 +44,4 @@ windows = { version = "0.58", features = [
   "Win32_UI_HiDpi",
   "Win32_Graphics_Gdi",
 ] }
+windows-capture = "2"
