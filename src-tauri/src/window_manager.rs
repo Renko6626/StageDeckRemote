@@ -30,14 +30,24 @@ pub fn is_capturable_window(title: &str, _style: u32, exstyle: u32, width: i32, 
         && height >= 100
 }
 
+/// PowerPoint 窗口按类名定优先级:数字越小越优先;非 PPT 窗口返回 None。
+/// 类名按 Win32 约定大小写精确匹配。纯函数,便于单测。
+pub fn ppt_window_rank(class: &str) -> Option<u8> {
+    match class {
+        "screenClass" => Some(0),   // 放映窗口(投影画面)
+        "PPTFrameClass" => Some(1), // 编辑主窗口
+        _ => None,
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{is_capturable_window, TargetWindow};
     use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, TRUE};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClientRect, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, IsWindow,
-        IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE, GWL_STYLE,
+        EnumWindows, GetClassNameW, GetClientRect, GetWindowLongW, GetWindowTextLengthW,
+        GetWindowTextW, IsWindow, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE, GWL_STYLE,
     };
 
     fn hwnd_to_isize(h: HWND) -> isize {
@@ -118,9 +128,54 @@ mod imp {
         out
     }
 
+    /// 读取窗口类名。
+    fn window_class(hwnd: HWND) -> String {
+        unsafe {
+            let mut buf = [0u16; 256];
+            let n = GetClassNameW(hwnd, &mut buf);
+            if n <= 0 {
+                return String::new();
+            }
+            String::from_utf16_lossy(&buf[..n as usize])
+        }
+    }
+
+    struct PptCandidate {
+        rank: u8,
+        win: TargetWindow,
+    }
+
+    extern "system" fn find_ppt_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            let best = &mut *(lparam.0 as *mut Option<PptCandidate>);
+            if !IsWindowVisible(hwnd).as_bool() {
+                return TRUE;
+            }
+            // 按类名识别 PowerPoint;放映窗口(screenClass)常无标题,故不套用
+            // is_capturable_window(它要求非空标题),只要求有有效客户区矩形。
+            let Some(rank) = super::ppt_window_rank(&window_class(hwnd)) else {
+                return TRUE;
+            };
+            if let Some(t) = to_target(hwnd) {
+                let better = match best {
+                    Some(c) => rank < c.rank,
+                    None => true,
+                };
+                if better {
+                    *best = Some(PptCandidate { rank, win: t });
+                }
+            }
+            TRUE
+        }
+    }
+
+    /// 自动识别 PowerPoint 窗口:优先放映窗口(screenClass),其次编辑主窗口(PPTFrameClass)。
     pub fn find_powerpoint() -> Option<TargetWindow> {
-        // 本轮保持未实现（自动识别属下一增量）。
-        None
+        let mut best: Option<PptCandidate> = None;
+        unsafe {
+            let _ = EnumWindows(Some(find_ppt_proc), LPARAM(&mut best as *mut _ as isize));
+        }
+        best.map(|c| c.win)
     }
 
     pub fn window_rect(handle: isize) -> Option<TargetWindow> {
@@ -196,6 +251,14 @@ mod tests {
     #[test]
     fn accepts_normal_window() {
         assert!(is_capturable_window("活动答题.pptx - PowerPoint", 0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn ranks_ppt_window_classes() {
+        assert_eq!(ppt_window_rank("screenClass"), Some(0)); // 放映窗口最优先
+        assert_eq!(ppt_window_rank("PPTFrameClass"), Some(1)); // 编辑主窗口次之
+        assert_eq!(ppt_window_rank("Chrome_WidgetWin_1"), None);
+        assert_eq!(ppt_window_rank(""), None);
     }
 
     #[cfg(windows)]

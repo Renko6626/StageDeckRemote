@@ -19,8 +19,8 @@
   --line: #26262b;
   --line-hi: #3a3a42;
   --ink: #ededee;
-  --ink-dim: #8b8b93;
-  --ink-faint: #5a5a62;
+  --ink-dim: #a2a2aa;
+  --ink-faint: #82828b;
   --danger: #d23b3b;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", system-ui, sans-serif;

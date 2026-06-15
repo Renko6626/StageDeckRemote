@@ -26,8 +26,10 @@ async function refreshList() {
 }
 
 async function autoDetect() {
+  error.value = null;
   try {
     await app.autoDetectPpt();
+    if (!selectedWindow.value) error.value = "未找到 PowerPoint 窗口";
   } catch (e) {
     error.value = String(e);
   }
