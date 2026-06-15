@@ -103,6 +103,8 @@ pub fn run() {
             commands::vba_list_macros,
             commands::vba_run_macro,
             commands::get_slide_state,
+            commands::get_presets,
+            commands::set_presets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::app_state::{AppState, TargetWindow};
 use crate::log::LogEntry;
@@ -152,4 +152,23 @@ pub fn vba_run_macro(name: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_slide_state() -> crate::ppt_com::SlideState {
     crate::ppt_com::slide_state().unwrap_or_else(|_| crate::ppt_com::SlideState::unavailable())
+}
+
+/// 导播 GUI:读取预制快捷消息列表。
+#[tauri::command]
+pub fn get_presets(state: State<Arc<AppState>>) -> Vec<crate::app_state::PresetMessage> {
+    state.inner.lock().map(|i| i.presets.clone()).unwrap_or_default()
+}
+
+/// 导播 GUI:用一组文本替换预制消息(id 服务端派生),并持久化。
+#[tauri::command]
+pub fn set_presets(app: tauri::AppHandle, state: State<Arc<AppState>>, texts: Vec<String>) {
+    let presets = crate::presets::from_texts(&texts);
+    if let Ok(mut i) = state.inner.lock() {
+        i.presets = presets.clone();
+    }
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = crate::presets::save(&dir.join("presets.json"), &presets);
+    }
+    log::event(&state, "已更新快捷消息预制");
 }
