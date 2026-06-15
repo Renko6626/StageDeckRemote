@@ -313,7 +313,7 @@ struct ActionReqBody {
     token: Option<String>,
     #[allow(dead_code)]
     client_id: Option<String>,
-    r#macro: String,
+    shape: String,
 }
 
 async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBody>) -> Response {
@@ -323,13 +323,13 @@ async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBod
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match crate::ppt_com::trigger_action(&req.r#macro) {
-        Ok(()) => {
-            log::event(&state, format!("触发宏：{}", req.r#macro));
+    match crate::ppt_com::trigger_action(&req.shape) {
+        Ok(macro_name) => {
+            log::event(&state, format!("触发 {} → {}", req.shape, macro_name));
             ok_json()
         }
         Err(e) => {
-            log::event(&state, format!("触发宏失败：{e}"));
+            log::event(&state, format!("触发失败（{}）:{e}", req.shape));
             json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed")
         }
     }
