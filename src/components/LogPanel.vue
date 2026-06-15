@@ -32,11 +32,23 @@ function fmtTime(ms: number): string {
 </template>
 
 <style scoped>
+.log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.log h2 {
+  flex: 0 0 auto;
+}
+
 .log ul {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 220px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
 }
 
