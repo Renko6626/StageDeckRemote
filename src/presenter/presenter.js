@@ -1,6 +1,6 @@
-// STAGEDECK · PRESENTER — two-mode controller (vanilla, no build; Axum serves this).
-// MAIN = COM control (per-slide macro buttons + transport). SYNC = screenshot + tap fallback.
-// All DOM mutation goes through render(); state is the single source of truth (防误触).
+// STAGEDECK · PRESENTER — 台上单手控制台(方案 C,vanilla,无构建;Axum 直出)。
+// MAIN = COM 宏按钮(双列大钮)+ 共享底部翻页坞;SYNC = 截图 + 点坐标兜底。
+// 所有 DOM 变更走 render();state 是唯一真源(防误触)。
 (function () {
   "use strict";
 
@@ -13,7 +13,6 @@
     connText: document.getElementById("conn-text"),
     latency: document.getElementById("latency"),
     slidePos: document.getElementById("slide-pos"),
-    lockStat: document.getElementById("lock-stat"),
     slideBig: document.getElementById("slide-big"),
     slideTotal: document.getElementById("slide-total"),
     showFlag: document.getElementById("show-flag"),
@@ -26,7 +25,7 @@
     pageMain: document.getElementById("page-main"),
     pageSync: document.getElementById("page-sync"),
     modes: Array.prototype.slice.call(document.querySelectorAll(".mode")),
-    tbtns: Array.prototype.slice.call(document.querySelectorAll(".t-btn")),
+    dockBtns: Array.prototype.slice.call(document.querySelectorAll(".dock [data-action]")),
   };
 
   var state = {
@@ -40,7 +39,7 @@
     com: { available: false, in_show: false, current: 0, total: 0, actions: [] },
     statusTimer: null,
   };
-  var lastActionsKey = ""; // to avoid rebuilding the grid every tick
+  var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
   function api(path, body) {
     var opts = body
@@ -81,29 +80,30 @@
     el.showFlag.textContent = state.com.in_show ? "LIVE" : "IDLE";
     el.showFlag.classList.toggle("live", state.com.in_show);
 
-    // lock chip + overlay + arm
+    // ARM strip: armed = presenter 已解锁(控制权放出)
     var armed = state.unlocked;
-    el.lockStat.textContent = armed ? "ARMED" : "LOCK";
-    el.lockStat.classList.toggle("armed", armed);
+    el.lockBtn.textContent = armed ? "● 已解锁 · 点此锁定" : "○ 已锁定 · 点此释放控制";
+    el.lockBtn.classList.toggle("locked", !armed);
+    el.lockBtn.disabled = !state.online || (!state.allowed && !state.unlocked);
+
+    // SYNC 锁定遮罩
     el.overlay.classList.toggle("hidden", armed);
     el.overlay.textContent = state.online
-      ? '已锁定 · 点「释放控制」'
+      ? "已锁定 · 点「释放控制」"
       : state.tokenInvalid
         ? "TOKEN 无效"
         : "连接已断开";
-    el.lockBtn.textContent = armed ? "锁定 · DISARM" : "释放控制 · ARM";
-    el.lockBtn.classList.toggle("armed", armed);
-    el.lockBtn.disabled = !state.online || (!state.allowed && !state.unlocked);
 
-    // COM availability (main page)
+    // COM 可用性(MAIN)
     var comUp = state.com.available;
     el.comUnavail.hidden = comUp;
     el.actions.hidden = !comUp;
     el.actionsEmpty.hidden = !comUp || state.com.actions.length > 0;
 
-    // transport buttons
-    el.tbtns.forEach(function (b) {
-      b.disabled = !canTransport();
+    // 翻页坞:canTransport(不要求 ARM)
+    var t = !canTransport();
+    el.dockBtns.forEach(function (b) {
+      b.disabled = t;
     });
 
     renderActions();
@@ -111,20 +111,18 @@
 
   function renderActions() {
     var actions = state.com.actions || [];
-    var key = actions.map(function (a) { return a.id + "|" + a.label + "|" + a.macro_name; }).join("¦");
+    var key = actions.map(function (a) { return a.id + "|" + a.label; }).join("¦");
     if (key !== lastActionsKey) {
       lastActionsKey = key;
       el.actions.innerHTML = "";
       actions.forEach(function (a) {
         var b = document.createElement("button");
         b.className = "act";
-        b.setAttribute("data-macro", a.macro_name);
         b.setAttribute("data-id", a.id);
-        b.textContent = a.label || a.macro_name;
+        b.textContent = a.label || a.id;
         el.actions.appendChild(b);
       });
     }
-    // enable/disable each tick (cheap)
     var ok = canAct();
     Array.prototype.forEach.call(el.actions.children, function (b) {
       b.disabled = !ok;
@@ -218,13 +216,13 @@
     api("/api/action", { shape: shape }).then(poll).catch(function () {});
   });
 
-  // ── transport (both pages, delegated on body) ──
+  // ── transport dock (delegated on body) ──
   var ACT = { prev: "/api/prev", next: "/api/next", black: "/api/black", restore: "/api/restore" };
   document.body.addEventListener("click", function (ev) {
-    var b = ev.target.closest(".t-btn");
+    var b = ev.target.closest(".d-btn, .d-next");
     if (!b || b.disabled) return;
     var a = b.getAttribute("data-action");
-    if (ACT[a]) api(ACT[a], {}).catch(function () {});
+    if (ACT[a]) api(ACT[a], {}).then(poll).catch(function () {});
   });
 
   // ── arm / lock ──
