@@ -168,7 +168,9 @@ pub fn set_presets(app: tauri::AppHandle, state: State<Arc<AppState>>, texts: Ve
         i.presets = presets.clone();
     }
     if let Ok(dir) = app.path().app_config_dir() {
-        let _ = crate::presets::save(&dir.join("presets.json"), &presets);
+        if let Err(e) = crate::presets::save(&dir.join("presets.json"), &presets) {
+            log::event(&state, format!("快捷消息持久化失败（重启后会丢失）：{e}"));
+        }
     }
     log::event(&state, "已更新快捷消息预制");
 }
