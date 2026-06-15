@@ -45,6 +45,7 @@ function onFrameError() {
 }
 
 // token 在首次状态轮询后才就位;就位即启动链式刷新(仅一次)。
+// 注:latch 假设 token 进程内不变(后端启动时一次性生成,见 lib.rs);若将来支持轮换 token,需去掉 started 改为监听空→非空跳变。
 function kick() {
   if (started || !token.value) return;
   started = true;

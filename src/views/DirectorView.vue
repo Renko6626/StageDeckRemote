@@ -52,7 +52,7 @@ onUnmounted(() => {
   grid-template-columns: 340px minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
-  height: calc(100vh - 44px); /* 减去顶栏(App.vue .topbar)高度 */
+  height: calc(100vh - 38px); /* 减去顶栏(App.vue .topbar,实测约 36px)高度 */
   overflow: hidden;
 }
 .rail {
