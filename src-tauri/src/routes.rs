@@ -4,7 +4,9 @@
 //! （看画面、点击、翻页、锁定）。导播的特权操作不在这里，而是走 Tauri IPC
 //! （commands.rs），天然不可从网络访问。
 //!
-//! 所有接口都要求正确 token；点击额外要求三层锁全部放行（spec §13.2）。
+//! 所有接口都要求正确 token；所有动作类接口（翻页/黑屏/恢复/宏/坐标点击）额外要求
+//! 三层锁全部放行（含主持人 ARM）；`/api/unlock` 要求导播层放行（button_allowed），
+//! 是主持人能够 ARM 的前置条件（spec §13.2）。
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -215,7 +217,8 @@ fn page_turn(state: &AppState, token: &Option<String>, forward: bool) -> Respons
     if !token_ok(state, token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    // 翻页与宏/点坐标同级:需三层全通(含主持人 ARM)。
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     // COM 翻页优先；失败回退 SendInput（先置前窗口）。
@@ -278,7 +281,7 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     match crate::ppt_com::set_black(true) {
@@ -291,7 +294,7 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     match crate::ppt_com::set_black(false) {
