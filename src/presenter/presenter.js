@@ -111,7 +111,7 @@
 
   function renderActions() {
     var actions = state.com.actions || [];
-    var key = actions.map(function (a) { return a.label + "|" + a.macro_name; }).join("¦");
+    var key = actions.map(function (a) { return a.id + "|" + a.label + "|" + a.macro_name; }).join("¦");
     if (key !== lastActionsKey) {
       lastActionsKey = key;
       el.actions.innerHTML = "";
@@ -119,7 +119,7 @@
         var b = document.createElement("button");
         b.className = "act";
         b.setAttribute("data-macro", a.macro_name);
-        b.setAttribute("data-run", a.macro_name);
+        b.setAttribute("data-id", a.id);
         b.textContent = a.label || a.macro_name;
         el.actions.appendChild(b);
       });
@@ -214,8 +214,8 @@
   el.actions.addEventListener("click", function (ev) {
     var b = ev.target.closest(".act");
     if (!b || b.disabled) return;
-    var macro = b.getAttribute("data-run");
-    api("/api/action", { macro: macro }).then(poll).catch(function () {});
+    var shape = b.getAttribute("data-id");
+    api("/api/action", { shape: shape }).then(poll).catch(function () {});
   });
 
   // ── transport (both pages, delegated on body) ──
