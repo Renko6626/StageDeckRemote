@@ -26,6 +26,10 @@
     pageSync: document.getElementById("page-sync"),
     modes: Array.prototype.slice.call(document.querySelectorAll(".mode")),
     dockBtns: Array.prototype.slice.call(document.querySelectorAll(".dock [data-action]")),
+    pageMsg: document.getElementById("page-msg"),
+    msgGrid: document.getElementById("msg-grid"),
+    msgEmpty: document.getElementById("msg-empty"),
+    msgSent: document.getElementById("msg-sent"),
   };
 
   var state = {
@@ -201,6 +205,8 @@
       el.modes.forEach(function (x) { x.classList.toggle("active", x === m); });
       el.pageMain.classList.toggle("active", mode === "main");
       el.pageSync.classList.toggle("active", mode === "sync");
+      el.pageMsg.classList.toggle("active", mode === "msg");
+      if (mode === "msg") loadMessages();
       if (mode === "sync") loadFrame(); // (re)start the snapshot chain
     });
   });
@@ -237,6 +243,40 @@
     var y = (ev.clientY - r.top) / r.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
     api("/api/click", { x: x, y: y }).catch(function () {});
+  });
+
+  // ── quick messages (MSG) ──
+  var sentTimer = null;
+  function loadMessages() {
+    api("/api/messages?token=" + encodeURIComponent(token))
+      .then(handle401)
+      .then(function (r) { return r ? r.json() : null; })
+      .then(function (list) {
+        if (!list) return;
+        el.msgEmpty.hidden = list.length > 0;
+        el.msgGrid.innerHTML = "";
+        list.forEach(function (m) {
+          var b = document.createElement("button");
+          b.className = "msg-btn";
+          b.setAttribute("data-id", m.id);
+          b.textContent = m.text;
+          el.msgGrid.appendChild(b);
+        });
+      })
+      .catch(function () {});
+  }
+  function flashSent(text) {
+    el.msgSent.textContent = text;
+    el.msgSent.hidden = false;
+    if (sentTimer) clearTimeout(sentTimer);
+    sentTimer = setTimeout(function () { el.msgSent.hidden = true; }, 1400);
+  }
+  el.msgGrid.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".msg-btn");
+    if (!b) return;
+    api("/api/message", { id: b.getAttribute("data-id") })
+      .then(function (r) { flashSent(r && r.ok ? "已发送 ✓" : "发送失败"); })
+      .catch(function () { flashSent("发送失败"); });
   });
 
   // ── boot ──
