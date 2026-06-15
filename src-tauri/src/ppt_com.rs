@@ -4,8 +4,9 @@ use serde::Serialize;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct SlideAction {
-    pub label: String,
-    pub macro_name: String,
+    pub id: String,         // 形状名(Shape.Name),触发标识
+    pub label: String,      // 显示:可见文字优先,空则形状名
+    pub macro_name: String, // 绑定的宏名(显示/日志;触发时服务端重新读取)
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -205,8 +206,12 @@ mod com {
                 if macro_name.is_empty() {
                     continue;
                 }
+                let id = get_str(&shape, "Name").unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
                 let label = shape_label(&shape);
-                out.push(super::SlideAction { label, macro_name });
+                out.push(super::SlideAction { id, label, macro_name });
             }
         }
         out
