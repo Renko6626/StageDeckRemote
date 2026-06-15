@@ -40,7 +40,7 @@ const restore = () => run(() => api.localRestore());
         远程控制：{{ remoteEnabled ? "已开启" : "已关闭" }}
       </button>
       <button class="big" :class="{ danger: controlLocked }" @click="toggleLock">
-        {{ controlLocked ? "已强制锁定（点击释放）" : "强制锁定" }}
+        {{ controlLocked ? "已紧急锁定（点击释放）" : "紧急锁定" }}
       </button>
     </div>
 
