@@ -207,11 +207,13 @@ mod com {
     /// 失败退回无参(CheckAnswer/BtnReset/Click_* 等无参宏)。带形状的失败发生在「参数个数
     /// 校验」阶段、宏体不执行,故无双跑风险(详见 spec §2.2)。
     pub fn run_macro_with_shape(app: &IDispatch, macro_name: &str, shape: &IDispatch) -> Result<(), String> {
-        let with_shape = call_void(app, "Run", &[VARIANT::from(macro_name), dispatch_variant(shape)]);
-        if with_shape.is_ok() {
-            return Ok(());
-        }
+        let with_shape = match call_void(app, "Run", &[VARIANT::from(macro_name), dispatch_variant(shape)]) {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        // 退回无参;若也失败,把带形状的原始错误一并带出（区分「无参宏」与「带形状宏宏体抛错」）。
         call_void(app, "Run", &[VARIANT::from(macro_name)])
+            .map_err(|no_arg| format!("带形状失败（{with_shape}）;无参回退也失败（{no_arg}）"))
     }
 
     /// 枚举一页的形状，取所有 ppActionRunMacro 绑定 → {label, macro}。
