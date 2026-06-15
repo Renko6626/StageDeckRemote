@@ -9,6 +9,7 @@ import QrCodePanel from "../components/QrCodePanel.vue";
 import LocalControlPanel from "../components/LocalControlPanel.vue";
 import LogPanel from "../components/LogPanel.vue";
 import DirectorPreview from "../components/DirectorPreview.vue";
+import DirectorMessages from "../components/DirectorMessages.vue";
 
 const app = useAppState();
 let timer: number | undefined;
@@ -100,6 +101,7 @@ onUnmounted(() => {
       <WindowPicker />
       <ControlStatus />
       <LocalControlPanel />
+      <DirectorMessages />
       <QrCodePanel />
     </aside>
     <div class="vsplit" @pointerdown="startRail" title="拖动调整栏宽"></div>
