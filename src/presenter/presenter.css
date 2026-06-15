@@ -1,7 +1,7 @@
 /* ───────────────────────────────────────────────────────────────
-   STAGEDECK · PRESENTER — "CONTROL SURFACE"
-   Cold industrial instrument panel. Monochrome + invert states.
-   Offline-safe system fonts (no CDN; LAN has no internet at events).
+   STAGEDECK · PRESENTER — "CONTROL SURFACE" (台上单手 · 方案 C)
+   竖屏单手:最高频动作贴底拇指区;巨钮「下一页」反白高亮。
+   离线系统字体(场馆无网)。
    ─────────────────────────────────────────────────────────────── */
 :root {
   --bg: #0a0a0b;
@@ -12,7 +12,7 @@
   --ink: #ededee;
   --ink-dim: #a2a2aa;
   --ink-faint: #82828b;
-  --danger: #d23b3b; /* used only for hard danger/lock rules */
+  --danger: #d23b3b;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", system-ui, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono",
@@ -35,7 +35,6 @@ body {
   color: var(--ink);
   font-family: var(--sans);
 }
-/* faint engineering grid backdrop */
 body::before {
   content: "";
   position: fixed;
@@ -96,21 +95,10 @@ body::before {
   width: 8px;
   height: 8px;
   background: var(--danger);
-  /* square "LED" */
   box-shadow: 0 0 0 1px #000;
 }
 .dot.online {
   background: var(--ink);
-}
-#lock-stat {
-  border: 1px solid var(--line-hi);
-  padding: 2px 7px;
-  color: var(--ink-dim);
-}
-#lock-stat.armed {
-  background: var(--ink);
-  color: #000;
-  border-color: var(--ink);
 }
 
 /* ─── mode switch ─── */
@@ -143,24 +131,13 @@ body::before {
   font-weight: 700;
 }
 
-/* ─── pages ─── */
-.page {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: none;
-  flex-direction: column;
-}
-.page.active {
-  display: flex;
-}
-
-/* ─── MAIN: readout ─── */
+/* ─── shared readout ─── */
 .readout {
   flex: 0 0 auto;
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 14px 16px 10px;
+  padding: 12px 16px 9px;
   border-bottom: 1px solid var(--line);
   font-family: var(--mono);
 }
@@ -171,8 +148,8 @@ body::before {
   text-transform: uppercase;
 }
 .readout-v {
-  font-size: 44px;
-  line-height: 0.9;
+  font-size: 40px;
+  line-height: 0.85;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -192,55 +169,52 @@ body::before {
   border-color: var(--ink);
 }
 
-/* ─── MAIN: actions ─── */
-.actions-wrap {
+/* ─── pages ─── */
+.page {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  padding: 12px 16px;
+  display: none;
+  flex-direction: column;
 }
+.page.active {
+  display: flex;
+}
+.page-main {
+  overflow-y: auto;
+}
+
+/* ─── MAIN: actions (big, two-column) ─── */
 .section-label {
+  flex: 0 0 auto;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.22em;
   color: var(--ink-faint);
   text-transform: uppercase;
-  margin-bottom: 10px;
+  padding: 12px 16px 0;
 }
 .actions {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 16px 14px;
 }
 .act {
   appearance: none;
-  min-height: 64px;
+  min-height: 62px;
   background: var(--panel-2);
   border: 1px solid var(--line-hi);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 10px;
+  letter-spacing: 0.01em;
+  padding: 10px 12px;
   cursor: pointer;
-  position: relative;
   text-align: left;
+  display: flex;
+  align-items: center;
   transition: background 0.06s linear, color 0.06s linear, transform 0.04s linear;
-}
-.act::before {
-  content: attr(data-macro);
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
-  max-width: 70%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .act:active:not(:disabled) {
   background: var(--ink);
@@ -257,12 +231,12 @@ body::before {
   font-size: 12px;
   letter-spacing: 0.06em;
   color: var(--ink-faint);
-  padding: 22px 4px;
+  padding: 22px 16px;
   text-align: center;
 }
 .unavail {
   border: 1px dashed var(--line-hi);
-  margin-top: 8px;
+  margin: 8px 16px 0;
   line-height: 1.7;
 }
 .unavail span {
@@ -279,7 +253,6 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid var(--line);
   overflow: hidden;
 }
 #preview {
@@ -317,15 +290,45 @@ body::before {
 .reticle.bl { bottom: 8px; left: 8px; border-right: none; border-top: none; }
 .reticle.br { bottom: 8px; right: 8px; border-left: none; border-top: none; }
 
-/* ─── transport ─── */
-.transport {
+/* ─── ARM safety strip (shared) ─── */
+.arm {
   flex: 0 0 auto;
+  appearance: none;
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  border-top: 1px solid var(--line-hi);
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.08s linear, background 0.08s linear, box-shadow 0.08s linear;
+}
+.arm.locked {
+  color: var(--danger);
+  background: rgba(210, 59, 59, 0.06);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.arm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── transport dock (shared, pinned bottom) ─── */
+.dock {
+  flex: 0 0 auto;
+}
+.dock-row {
   display: grid;
-  grid-template-columns: 1fr 0.8fr 0.8fr 1fr;
+  grid-template-columns: 1.2fr 0.9fr 0.9fr;
   border-top: 1px solid var(--line-hi);
 }
-.t-btn {
+.d-btn {
   appearance: none;
+  min-height: var(--tap);
   background: transparent;
   border: none;
   border-right: 1px solid var(--line);
@@ -333,65 +336,64 @@ body::before {
   font-family: var(--sans);
   font-size: 15px;
   font-weight: 600;
-  min-height: var(--tap);
-  padding: 12px 6px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   transition: background 0.06s linear, color 0.06s linear;
 }
-.t-btn:last-child {
+.d-btn:last-child {
   border-right: none;
 }
-.t-btn span {
+.d-btn .gl {
   font-family: var(--mono);
+  font-size: 18px;
   color: var(--ink-faint);
 }
-.t-btn:active:not(:disabled) {
+.d-btn:active:not(:disabled) {
   background: var(--ink);
   color: #000;
 }
-.t-btn:active:not(:disabled) span {
+.d-btn:active:not(:disabled) .gl {
   color: #000;
 }
-.t-black:active:not(:disabled) {
+.d-black:active:not(:disabled) {
   background: var(--danger);
   color: #fff;
 }
-.t-btn:disabled {
+.d-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
-
-/* ─── arm bar ─── */
-.armbar {
-  flex: 0 0 auto;
-  border-top: 1px solid var(--line-hi);
-  padding: 10px;
-}
-.arm {
+.d-next {
   appearance: none;
   width: 100%;
-  min-height: var(--tap);
-  background: transparent;
-  border: 1px solid var(--ink-dim);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 13px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.08s linear, color 0.08s linear, border-color 0.08s linear;
-}
-.arm.armed {
+  height: 80px;
+  border: none;
+  border-top: 1px solid var(--line-hi);
   background: var(--ink);
   color: #000;
-  border-color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.06s linear, background 0.06s linear;
 }
-.arm:disabled {
-  opacity: 0.34;
+.d-next .gl {
+  font-family: var(--mono);
+  font-size: 30px;
+  line-height: 1;
+}
+.d-next:active:not(:disabled) {
+  background: #cfcfd4;
+}
+.d-next:disabled {
+  opacity: 0.3;
   cursor: not-allowed;
 }

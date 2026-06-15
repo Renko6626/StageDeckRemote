@@ -18,7 +18,6 @@
           <span class="stat"><span class="dot" id="conn-dot"></span><b id="conn-text">LINK…</b></span>
           <span class="stat">LAT <b id="latency">--</b></span>
           <span class="stat">PG <b id="slide-pos">--/--</b></span>
-          <span class="stat" id="lock-stat">LOCK</span>
         </span>
       </header>
 
@@ -28,30 +27,22 @@
         <button class="mode" data-mode="sync">屏幕 · SYNC</button>
       </nav>
 
-      <!-- ─── MAIN: COM control ─── -->
+      <!-- ─── shared readout ─── -->
+      <section class="readout">
+        <span class="readout-k">SLIDE</span>
+        <span class="readout-v" id="slide-big">--</span>
+        <span class="readout-k">/ <span id="slide-total">--</span></span>
+        <span class="show-flag" id="show-flag">IDLE</span>
+      </section>
+
+      <!-- ─── MAIN: COM macro actions (scrolls) ─── -->
       <main class="page page-main active" id="page-main">
-        <section class="readout">
-          <span class="readout-k">SLIDE</span>
-          <span class="readout-v" id="slide-big">--</span>
-          <span class="readout-k">/ <span id="slide-total">--</span></span>
-          <span class="show-flag" id="show-flag">IDLE</span>
-        </section>
-
-        <section class="actions-wrap">
-          <div class="section-label">页内动作 · ACTIONS</div>
-          <div class="actions" id="actions"></div>
-          <div class="empty" id="actions-empty">无可触发动作 / 切到 SYNC 用坐标点击</div>
-          <div class="unavail" id="com-unavail" hidden>
-            COM 不可用<br /><span>PowerPoint 未连接 — 请切到 SYNC 屏幕同步</span>
-          </div>
-        </section>
-
-        <footer class="transport">
-          <button class="t-btn" data-action="prev"><span>◄</span>上一页</button>
-          <button class="t-btn t-black" data-action="black">黑屏</button>
-          <button class="t-btn" data-action="restore">恢复</button>
-          <button class="t-btn" data-action="next">下一页<span>►</span></button>
-        </footer>
+        <div class="section-label">页内动作 · ACTIONS</div>
+        <div class="actions" id="actions"></div>
+        <div class="empty" id="actions-empty" hidden>无可触发动作 / 切到 SYNC 用坐标点击</div>
+        <div class="unavail" id="com-unavail" hidden>
+          COM 不可用<br /><span>PowerPoint 未连接 — 请切到 SYNC 屏幕同步</span>
+        </div>
       </main>
 
       <!-- ─── SYNC: screenshot fallback ─── -->
@@ -62,17 +53,19 @@
           <div class="reticle tl"></div><div class="reticle tr"></div>
           <div class="reticle bl"></div><div class="reticle br"></div>
         </section>
-        <footer class="transport">
-          <button class="t-btn" data-action="prev"><span>◄</span>上一页</button>
-          <button class="t-btn t-black" data-action="black">黑屏</button>
-          <button class="t-btn" data-action="restore">恢复</button>
-          <button class="t-btn" data-action="next">下一页<span>►</span></button>
-        </footer>
       </main>
 
-      <!-- ─── arm bar (shared) ─── -->
-      <div class="armbar">
-        <button class="arm" id="lock-btn" data-action="toggle-lock">释放控制 · ARM</button>
+      <!-- ─── ARM safety strip (shared) ─── -->
+      <button class="arm" id="lock-btn" data-action="toggle-lock">● 已解锁 · 点此锁定</button>
+
+      <!-- ─── transport dock (shared, pinned bottom) ─── -->
+      <div class="dock">
+        <div class="dock-row">
+          <button class="d-btn d-prev" data-action="prev"><span class="gl">◄</span>上一页</button>
+          <button class="d-btn d-black" data-action="black">黑屏</button>
+          <button class="d-btn d-restore" data-action="restore">恢复</button>
+        </div>
+        <button class="d-next" data-action="next"><span class="gl">►</span><span class="tx">下一页</span></button>
       </div>
     </div>
     <script src="/presenter/presenter.js"></script>
