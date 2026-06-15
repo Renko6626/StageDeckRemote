@@ -30,6 +30,16 @@ pub fn is_capturable_window(title: &str, _style: u32, exstyle: u32, width: i32, 
         && height >= 100
 }
 
+/// PowerPoint 窗口按类名定优先级:数字越小越优先;非 PPT 窗口返回 None。
+/// 类名按 Win32 约定大小写精确匹配。纯函数,便于单测。
+pub fn ppt_window_rank(class: &str) -> Option<u8> {
+    match class {
+        "screenClass" => Some(0),   // 放映窗口(投影画面)
+        "PPTFrameClass" => Some(1), // 编辑主窗口
+        _ => None,
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{is_capturable_window, TargetWindow};
@@ -196,6 +206,14 @@ mod tests {
     #[test]
     fn accepts_normal_window() {
         assert!(is_capturable_window("活动答题.pptx - PowerPoint", 0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn ranks_ppt_window_classes() {
+        assert_eq!(ppt_window_rank("screenClass"), Some(0)); // 放映窗口最优先
+        assert_eq!(ppt_window_rank("PPTFrameClass"), Some(1)); // 编辑主窗口次之
+        assert_eq!(ppt_window_rank("Chrome_WidgetWin_1"), None);
+        assert_eq!(ppt_window_rank(""), None);
     }
 
     #[cfg(windows)]
