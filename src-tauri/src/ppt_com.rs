@@ -4,8 +4,9 @@ use serde::Serialize;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct SlideAction {
-    pub label: String,
-    pub macro_name: String,
+    pub id: String,         // 形状名(Shape.Name),触发标识
+    pub label: String,      // 显示:可见文字优先,空则形状名
+    pub macro_name: String, // 绑定的宏名(显示/日志;触发时服务端重新读取)
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -181,6 +182,40 @@ mod com {
         i32::try_from(&v).map_err(|e| format!("{name} 不是整数（{e}）"))
     }
 
+    /// 取当前页:放映视图优先,否则编辑视图。返回 (是否放映中, Slide)。
+    pub fn current_slide(app: &IDispatch) -> Result<(bool, IDispatch), String> {
+        let shows = get_obj(app, "SlideShowWindows")?;
+        if get_i32(&shows, "Count").unwrap_or(0) >= 1 {
+            let win = call_obj(&shows, "Item", &[VARIANT::from(1i32)])?;
+            let view = get_obj(&win, "View")?;
+            Ok((true, get_obj(&view, "Slide")?))
+        } else {
+            let win = get_obj(app, "ActiveWindow")?;
+            let view = get_obj(&win, "View")?;
+            Ok((false, get_obj(&view, "Slide")?))
+        }
+    }
+
+    /// 把一个 IDispatch 包成 VT_DISPATCH 的 VARIANT(owned;由 VARIANT 的 Drop 负责 Release)。
+    /// windows 0.58 已实现 `From<IDispatch> for VARIANT`(vt=9=VT_DISPATCH,转移一份所有权;
+    /// clone() 先 AddRef,VARIANT 的 Drop 走 VariantClear/Release,引用计数平衡)。
+    fn dispatch_variant(disp: &IDispatch) -> VARIANT {
+        VARIANT::from(disp.clone())
+    }
+
+    /// Application.Run(macro, shape):先带形状(复刻对 `Sub Foo(shp As Shape)` 的点击),
+    /// 失败退回无参(CheckAnswer/BtnReset/Click_* 等无参宏)。带形状的失败发生在「参数个数
+    /// 校验」阶段、宏体不执行,故无双跑风险(详见 spec §2.2)。
+    pub fn run_macro_with_shape(app: &IDispatch, macro_name: &str, shape: &IDispatch) -> Result<(), String> {
+        let with_shape = match call_void(app, "Run", &[VARIANT::from(macro_name), dispatch_variant(shape)]) {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        // 退回无参;若也失败,把带形状的原始错误一并带出（区分「无参宏」与「带形状宏宏体抛错」）。
+        call_void(app, "Run", &[VARIANT::from(macro_name)])
+            .map_err(|no_arg| format!("带形状失败（{with_shape}）;无参回退也失败（{no_arg}）"))
+    }
+
     /// 枚举一页的形状，取所有 ppActionRunMacro 绑定 → {label, macro}。
     pub fn slide_actions(slide: &IDispatch) -> Vec<super::SlideAction> {
         let mut out = Vec::new();
@@ -205,8 +240,12 @@ mod com {
                 if macro_name.is_empty() {
                     continue;
                 }
+                let id = get_str(&shape, "Name").unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
                 let label = shape_label(&shape);
-                out.push(super::SlideAction { label, macro_name });
+                out.push(super::SlideAction { id, label, macro_name });
             }
         }
         out
@@ -276,20 +315,7 @@ pub fn slide_state() -> Result<SlideState, String> {
     let slides = com::get_obj(&pres, "Slides")?;
     let total = com::get_i32(&slides, "Count").unwrap_or(0);
 
-    // 当前页：优先放映视图，否则编辑视图。
-    let shows = com::get_obj(&app, "SlideShowWindows")?;
-    let show_count = com::get_i32(&shows, "Count").unwrap_or(0);
-    let (in_show, slide) = if show_count >= 1 {
-        let win = com::call_obj(&shows, "Item", &[windows::core::VARIANT::from(1i32)])?;
-        let view = com::get_obj(&win, "View")?;
-        let slide = com::get_obj(&view, "Slide")?;
-        (true, slide)
-    } else {
-        let win = com::get_obj(&app, "ActiveWindow")?;
-        let view = com::get_obj(&win, "View")?;
-        let slide = com::get_obj(&view, "Slide")?;
-        (false, slide)
-    };
+    let (in_show, slide) = com::current_slide(&app)?;
     let current = com::get_i32(&slide, "SlideIndex").unwrap_or(0);
 
     let actions = com::slide_actions(&slide);
@@ -314,14 +340,29 @@ pub fn run_macro(_name: &str) -> Result<(), String> {
     Err("仅 Windows 支持 PowerPoint COM".to_string())
 }
 
-/// 触发当前页的某个宏按钮（安全：仅允许当前页已枚举的宏）。
+/// 触发当前页某个形状的鼠标动作宏(安全:仅当前页、仅 ppActionRunMacro;宏名服务端现读)。
+/// 返回实际触发的宏名,供日志。
 #[cfg(windows)]
-pub fn trigger_action(macro_name: &str) -> Result<(), String> {
-    let state = slide_state()?;
-    if !state.actions.iter().any(|a| a.macro_name == macro_name) {
-        return Err(format!("宏不在当前页按钮中：{macro_name}"));
+pub fn trigger_action(shape_id: &str) -> Result<String, String> {
+    let _co = com::ComGuard::init();
+    let app = com::connect()?;
+    let (_in_show, slide) = com::current_slide(&app)?;
+    let shapes = com::get_obj(&slide, "Shapes")?;
+    // 按名定位(对增删导致的索引漂移免疫);定位不到 → 拒绝(不在当前页)。
+    let shape = com::call_obj(&shapes, "Item", &[windows::core::VARIANT::from(shape_id)])
+        .map_err(|_| format!("形状不在当前页:{shape_id}"))?;
+    // ActionSettings(1=ppMouseClick).Action 必须为 8=ppActionRunMacro。
+    let acts = com::call_obj(&shape, "ActionSettings", &[windows::core::VARIANT::from(1i32)])
+        .map_err(|_| format!("形状无鼠标动作:{shape_id}"))?;
+    if com::get_i32(&acts, "Action").unwrap_or(0) != 8 {
+        return Err(format!("形状不是运行宏动作:{shape_id}"));
     }
-    run_macro(macro_name)
+    let macro_name = com::get_str(&acts, "Run").unwrap_or_default();
+    if macro_name.is_empty() {
+        return Err(format!("形状未绑定宏:{shape_id}"));
+    }
+    com::run_macro_with_shape(&app, &macro_name, &shape)?;
+    Ok(macro_name)
 }
 
 /// 放映导航。
@@ -354,7 +395,7 @@ pub fn set_black(on: bool) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn trigger_action(_macro_name: &str) -> Result<(), String> { Err("仅 Windows".into()) }
+pub fn trigger_action(_shape_id: &str) -> Result<String, String> { Err("仅 Windows".into()) }
 #[cfg(not(windows))]
 pub fn nav_next() -> Result<(), String> { Err("仅 Windows".into()) }
 #[cfg(not(windows))]

@@ -29,6 +29,7 @@ export interface LogEntry {
 }
 
 export interface SlideAction {
+  id: string;
   label: string;
   macro_name: string;
 }
