@@ -25,6 +25,7 @@
       <nav class="modeswitch">
         <button class="mode active" data-mode="main">主控 · MAIN</button>
         <button class="mode" data-mode="sync">屏幕 · SYNC</button>
+        <button class="mode" data-mode="msg">消息 · MSG</button>
       </nav>
 
       <!-- ─── shared readout ─── -->
@@ -53,6 +54,14 @@
           <div class="reticle tl"></div><div class="reticle tr"></div>
           <div class="reticle bl"></div><div class="reticle br"></div>
         </section>
+      </main>
+
+      <!-- ─── MSG: quick messages ─── -->
+      <main class="page page-msg" id="page-msg">
+        <div class="section-label">快捷消息 · 点击即发</div>
+        <div class="msg-grid" id="msg-grid"></div>
+        <div class="empty" id="msg-empty" hidden>暂无预制消息</div>
+        <div class="msg-sent" id="msg-sent" hidden>已发送 ✓</div>
       </main>
 
       <!-- ─── ARM safety strip (shared) ─── -->

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::log::LogEntry;
 
+use tokio::sync::mpsc::UnboundedSender;
+
 /// 当前被控制的目标窗口（PPT 放映窗口）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TargetWindow {
@@ -21,6 +23,21 @@ pub struct TargetWindow {
     pub height: i32,
     /// 平台原生句柄（Windows HWND 以 isize 存储）；0 表示无效。
     pub handle: isize,
+}
+
+/// 预制快捷消息(导播拥有、可编辑、同步给主持人)。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PresetMessage {
+    pub id: String,
+    pub text: String,
+}
+
+/// 一条已收到的消息。本期 from 恒为 "presenter";字段保留以备导播→主持人。
+#[derive(Clone, Debug, Serialize)]
+pub struct HostMessage {
+    pub from: String,
+    pub text: String,
+    pub at_ms: u64,
 }
 
 /// 受 `Mutex` 保护的可变运行状态。
@@ -36,15 +53,19 @@ pub struct Inner {
     pub token: String,
     pub server_port: u16,
     pub logs: Vec<LogEntry>,
+    /// 导播可编辑的预制快捷消息(同步给主持人)。
+    pub presets: Vec<PresetMessage>,
 }
 
 pub struct AppState {
     pub inner: Mutex<Inner>,
     pub capture: crate::capture::CaptureManager,
+    /// 收到主持人消息时投递给 Tauri 接收任务(显示软弹窗)。
+    pub message_tx: UnboundedSender<HostMessage>,
 }
 
 impl AppState {
-    pub fn new(token: String, server_port: u16) -> Self {
+    pub fn new(token: String, server_port: u16, message_tx: UnboundedSender<HostMessage>) -> Self {
         AppState {
             inner: Mutex::new(Inner {
                 selected_window: None,
@@ -57,8 +78,10 @@ impl AppState {
                 token,
                 server_port,
                 logs: Vec::new(),
+                presets: crate::presets::default_presets(),
             }),
             capture: crate::capture::CaptureManager::new(),
+            message_tx,
         }
     }
 
@@ -85,7 +108,8 @@ mod tests {
 
     #[test]
     fn default_is_not_force_locked() {
-        let st = AppState::new("t".into(), 0);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let st = AppState::new("t".into(), 0, tx);
         let i = st.inner.lock().unwrap();
         assert!(!i.remote_enabled, "远程默认关");
         assert!(!i.control_locked, "强制锁默认释放(新默认)");
@@ -94,7 +118,8 @@ mod tests {
 
     #[test]
     fn gating_state_machine() {
-        let st = AppState::new("t".into(), 0);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let st = AppState::new("t".into(), 0, tx);
         // 远程关 → 全禁
         assert!(!st.button_allowed());
         assert!(!st.click_allowed());

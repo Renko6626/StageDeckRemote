@@ -42,6 +42,11 @@ export interface SlideState {
   actions: SlideAction[];
 }
 
+export interface PresetMessage {
+  id: string;
+  text: string;
+}
+
 export const api = {
   getStatus: () => invoke<DirectorStatus>("get_status"),
   listWindows: () => invoke<TargetWindow[]>("list_windows"),
@@ -55,4 +60,6 @@ export const api = {
   localRestore: () => invoke<void>("local_restore"),
   getLogs: () => invoke<LogEntry[]>("get_logs"),
   getSlideState: () => invoke<SlideState>("get_slide_state"),
+  getPresets: () => invoke<PresetMessage[]>("get_presets"),
+  setPresets: (texts: string[]) => invoke<void>("set_presets", { texts }),
 };

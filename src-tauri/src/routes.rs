@@ -45,6 +45,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/restore", post(restore))
         .route("/api/slide_state", get(slide_state))
         .route("/api/action", post(action))
+        .route("/api/messages", get(messages))
+        .route("/api/message", post(message))
         .with_state(state)
 }
 
@@ -76,6 +78,13 @@ fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -336,4 +345,47 @@ async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBod
             json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed")
         }
     }
+}
+
+// ---- 快捷消息(主持人 → 导播,仅 token,不受三层锁限制) -------------------
+
+async fn messages(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>) -> Response {
+    if !token_ok(&state, &q.token) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    let presets = state
+        .inner
+        .lock()
+        .map(|i| i.presets.clone())
+        .unwrap_or_default();
+    Json(presets).into_response()
+}
+
+#[derive(Deserialize)]
+struct MessageReq {
+    token: Option<String>,
+    #[allow(dead_code)]
+    client_id: Option<String>,
+    id: String,
+}
+
+async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>) -> Response {
+    if !token_ok(&state, &req.token) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    // 只允许发送预制列表里的消息:校验 id,取服务端当前文本。
+    let text = state.inner.lock().ok().and_then(|i| {
+        i.presets.iter().find(|p| p.id == req.id).map(|p| p.text.clone())
+    });
+    let Some(text) = text else {
+        return json_err(StatusCode::BAD_REQUEST, "unknown_message");
+    };
+    let msg = crate::app_state::HostMessage {
+        from: "presenter".to_string(),
+        text: text.clone(),
+        at_ms: now_ms(),
+    };
+    let _ = state.message_tx.send(msg);
+    crate::log::event(&state, format!("收到主持人消息：{text}"));
+    ok_json()
 }

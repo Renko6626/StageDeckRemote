@@ -105,7 +105,7 @@ body::before {
 .modeswitch {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   border-bottom: 1px solid var(--line-hi);
 }
 .mode {
@@ -396,4 +396,50 @@ body::before {
 .d-next:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* ─── MSG: quick messages ─── */
+.page-msg {
+  overflow-y: auto;
+}
+.msg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px 16px 14px;
+}
+.msg-btn {
+  appearance: none;
+  min-height: 64px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-hi);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.06s linear, color 0.06s linear, transform 0.04s linear;
+}
+.msg-btn:active:not(:disabled) {
+  background: var(--ink);
+  color: #000;
+  transform: translateY(1px);
+}
+.msg-btn:disabled {
+  opacity: 0.32;
+}
+.msg-sent {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: #000;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  padding: 8px 16px;
+  z-index: 5;
 }
