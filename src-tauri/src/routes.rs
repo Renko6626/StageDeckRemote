@@ -215,7 +215,8 @@ fn page_turn(state: &AppState, token: &Option<String>, forward: bool) -> Respons
     if !token_ok(state, token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    // 翻页与宏/点坐标同级:需三层全通(含主持人 ARM)。
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     // COM 翻页优先；失败回退 SendInput（先置前窗口）。
@@ -278,7 +279,7 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     match crate::ppt_com::set_black(true) {
@@ -291,7 +292,7 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    if !state.button_allowed() {
+    if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     match crate::ppt_com::set_black(false) {
