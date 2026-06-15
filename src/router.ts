@@ -3,8 +3,12 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 
 import DirectorView from "./views/DirectorView.vue";
+import ToastView from "./views/ToastView.vue";
 
 export const router = createRouter({
   history: createWebHashHistory(),
-  routes: [{ path: "/", name: "director", component: DirectorView }],
+  routes: [
+    { path: "/", name: "director", component: DirectorView },
+    { path: "/toast", name: "toast", component: ToastView, meta: { bare: true } },
+  ],
 });

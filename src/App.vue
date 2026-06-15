@@ -3,7 +3,8 @@
 </script>
 
 <template>
-  <div class="app">
+  <router-view v-if="$route.meta.bare" />
+  <div v-else class="app">
     <header class="topbar">
       <strong class="brand">STAGEDECK<span class="brand-sub">&nbsp;·&nbsp;DIRECTOR</span></strong>
     </header>
