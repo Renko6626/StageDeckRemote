@@ -52,12 +52,9 @@
     return fetch(path, opts);
   }
 
-  // ── gating ──
+  // ── gating ──（主持人侧一切操作都需 ARM 解锁)
   function canAct() {
     return state.online && state.allowed && state.unlocked;
-  }
-  function canTransport() {
-    return state.online && state.allowed;
   }
 
   // ── render: single DOM update point ──
@@ -100,8 +97,8 @@
     el.actions.hidden = !comUp;
     el.actionsEmpty.hidden = !comUp || state.com.actions.length > 0;
 
-    // 翻页坞:canTransport(不要求 ARM)
-    var t = !canTransport();
+    // 翻页坞:与宏按钮一致,需 ARM(canAct)。未解锁则全禁用 →「锁就全锁」。
+    var t = !canAct();
     el.dockBtns.forEach(function (b) {
       b.disabled = t;
     });
