@@ -13,8 +13,16 @@ import ComStatusPanel from "../components/ComStatusPanel.vue";
 const app = useAppState();
 let timer: number | undefined;
 
-onMounted(() => {
-  void app.refresh();
+onMounted(async () => {
+  await app.refresh();
+  // 启动时未选窗口才自动识别;手动选择为权威,绝不被自动悄悄覆盖。
+  if (!app.selectedWindow) {
+    try {
+      await app.autoDetectPpt();
+    } catch {
+      /* 自动识别失败不阻塞启动 */
+    }
+  }
   timer = window.setInterval(() => void app.refresh(), 1500);
 });
 
