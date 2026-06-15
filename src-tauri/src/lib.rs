@@ -15,6 +15,7 @@ mod log;
 mod network;
 mod obs;
 mod ppt_com;
+mod presets;
 mod routes;
 mod web_server;
 mod window_manager;
@@ -22,6 +23,7 @@ mod window_manager;
 use std::sync::Arc;
 
 use app_state::AppState;
+use tauri::{Emitter, Manager};
 
 const DEFAULT_PORT: u16 = 8787;
 
@@ -37,18 +39,53 @@ pub fn run() {
     }
 
     let token = auth::generate_token();
-    let state = Arc::new(AppState::new(token, DEFAULT_PORT));
+    let (message_tx, mut message_rx) =
+        tokio::sync::mpsc::unbounded_channel::<app_state::HostMessage>();
+    let state = Arc::new(AppState::new(token, DEFAULT_PORT, message_tx));
     let server_state = state.clone();
+    let preset_state = state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(state)
-        .setup(move |_app| {
-            // 在后台启动局域网 Web 服务（主持人端入口）。
+        .setup(move |app| {
+            // 后台启动局域网 Web 服务(主持人端入口)。
             let st = server_state.clone();
             tauri::async_runtime::spawn(async move {
                 web_server::run(st).await;
             });
+
+            // 载入持久化的预制消息(覆盖默认种子)。
+            if let Ok(dir) = app.path().app_config_dir() {
+                let loaded = presets::load(&dir.join("presets.json"));
+                if let Ok(mut i) = preset_state.inner.lock() {
+                    i.presets = loaded;
+                }
+            }
+
+            // 接收主持人消息 → 顶部居中软弹窗 + 任务栏闪(均不抢焦点)。
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(msg) = message_rx.recv().await {
+                    if let Some(toast) = handle.get_webview_window("toast") {
+                        let wsize = toast
+                            .outer_size()
+                            .unwrap_or(tauri::PhysicalSize { width: 380, height: 120 });
+                        if let Ok(Some(mon)) = toast.primary_monitor() {
+                            let msize = mon.size();
+                            let x = ((msize.width as i32) - (wsize.width as i32)) / 2;
+                            let _ = toast.set_position(tauri::PhysicalPosition { x, y: 40 });
+                        }
+                        let _ = toast.show();
+                        let _ = handle.emit_to("toast", "host-message", msg.clone());
+                    }
+                    if let Some(main) = handle.get_webview_window("main") {
+                        let _ = main
+                            .request_user_attention(Some(tauri::UserAttentionType::Informational));
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
