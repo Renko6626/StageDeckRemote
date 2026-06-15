@@ -4,7 +4,9 @@
 //! （看画面、点击、翻页、锁定）。导播的特权操作不在这里，而是走 Tauri IPC
 //! （commands.rs），天然不可从网络访问。
 //!
-//! 所有接口都要求正确 token；点击额外要求三层锁全部放行（spec §13.2）。
+//! 所有接口都要求正确 token；所有动作类接口（翻页/黑屏/恢复/宏/坐标点击）额外要求
+//! 三层锁全部放行（含主持人 ARM）；`/api/unlock` 要求导播层放行（button_allowed），
+//! 是主持人能够 ARM 的前置条件（spec §13.2）。
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
