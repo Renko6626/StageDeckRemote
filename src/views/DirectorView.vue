@@ -45,10 +45,12 @@ function startRail(e: PointerEvent) {
   const up = () => {
     h.removeEventListener("pointermove", move);
     h.removeEventListener("pointerup", up);
+    h.removeEventListener("pointercancel", up);
     localStorage.setItem("sd.dir.railW", String(railWidth.value));
   };
   h.addEventListener("pointermove", move);
   h.addEventListener("pointerup", up);
+  h.addEventListener("pointercancel", up); // 触控被系统手势打断时也要收尾
 }
 
 // 横向拖条:调预览/日志高度比(向上拖增大日志)。
@@ -66,10 +68,12 @@ function startLog(e: PointerEvent) {
   const up = () => {
     h.removeEventListener("pointermove", move);
     h.removeEventListener("pointerup", up);
+    h.removeEventListener("pointercancel", up);
     localStorage.setItem("sd.dir.logH", String(logHeight.value));
   };
   h.addEventListener("pointermove", move);
   h.addEventListener("pointerup", up);
+  h.addEventListener("pointercancel", up); // 触控被系统手势打断时也要收尾
 }
 
 onMounted(async () => {
@@ -145,6 +149,8 @@ onUnmounted(() => {
   background: var(--line);
   transition: background 0.1s linear;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .vsplit {
   cursor: col-resize;
