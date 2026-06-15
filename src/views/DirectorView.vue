@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 导播端主面板：组合各控制组件，并定时轮询后端状态（spec §12.1）。
+// 导播端主面板:方案 B —— 左控制栏 | 右(预览↑ 日志↓)。定时轮询后端状态(spec §12.1)。
 import { onMounted, onUnmounted } from "vue";
 
 import { useAppState } from "../stores/appState";
@@ -8,7 +8,7 @@ import WindowPicker from "../components/WindowPicker.vue";
 import QrCodePanel from "../components/QrCodePanel.vue";
 import LocalControlPanel from "../components/LocalControlPanel.vue";
 import LogPanel from "../components/LogPanel.vue";
-import ComStatusPanel from "../components/ComStatusPanel.vue";
+import DirectorPreview from "../components/DirectorPreview.vue";
 
 const app = useAppState();
 let timer: number | undefined;
@@ -33,38 +33,60 @@ onUnmounted(() => {
 
 <template>
   <div class="dashboard">
-    <div class="col">
+    <aside class="rail">
       <WindowPicker />
-      <QrCodePanel />
-    </div>
-    <div class="col">
-      <ComStatusPanel />
       <ControlStatus />
       <LocalControlPanel />
-    </div>
-    <div class="col">
+      <QrCodePanel />
+    </aside>
+    <main class="main">
+      <DirectorPreview />
       <LogPanel />
-    </div>
+    </main>
   </div>
 </template>
 
 <style scoped>
 .dashboard {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 340px minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
-  align-items: start;
+  height: calc(100vh - 44px); /* 减去顶栏(App.vue .topbar)高度 */
+  overflow: hidden;
 }
-
-.col {
-  display: grid;
+.rail {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+/* 预览吃满剩余高度;日志贴底(自然高度,其内部列表自带 220px 滚动)。 */
+.main > :first-child {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.main > :last-child {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 980px) {
   .dashboard {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  /* 堆叠时预览给固定 16:9 高度 */
+  .main > :first-child {
+    flex: none;
+    height: 56.25vw;
   }
 }
 </style>
