@@ -48,9 +48,10 @@ impl AppState {
         AppState {
             inner: Mutex::new(Inner {
                 selected_window: None,
-                // 默认最安全：远程关闭、强制锁、未解锁。导播显式开启后才可控。
+                // 默认:远程关闭(日常总闸)、强制锁释放(仅紧急用)、未解锁。
+                // 导播开「远程控制」一步即放行,主持人再 ARM 即可全功能。
                 remote_enabled: false,
-                control_locked: true,
+                control_locked: false,
                 presenter_unlocked: false,
                 active_client_id: None,
                 token,
@@ -75,5 +76,38 @@ impl AppState {
             .lock()
             .map(|i| i.remote_enabled && !i.control_locked)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_not_force_locked() {
+        let st = AppState::new("t".into(), 0);
+        let i = st.inner.lock().unwrap();
+        assert!(!i.remote_enabled, "远程默认关");
+        assert!(!i.control_locked, "强制锁默认释放(新默认)");
+        assert!(!i.presenter_unlocked, "默认未解锁");
+    }
+
+    #[test]
+    fn gating_state_machine() {
+        let st = AppState::new("t".into(), 0);
+        // 远程关 → 全禁
+        assert!(!st.button_allowed());
+        assert!(!st.click_allowed());
+        // 开远程、未强锁 → 导播层放行(button_allowed 真),但主持人未 ARM → 动作仍禁
+        st.inner.lock().unwrap().remote_enabled = true;
+        assert!(st.button_allowed());
+        assert!(!st.click_allowed());
+        // 主持人 ARM → 一切动作放行
+        st.inner.lock().unwrap().presenter_unlocked = true;
+        assert!(st.click_allowed());
+        // 紧急强锁压制一切
+        st.inner.lock().unwrap().control_locked = true;
+        assert!(!st.button_allowed());
+        assert!(!st.click_allowed());
     }
 }
