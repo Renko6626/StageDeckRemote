@@ -7,14 +7,17 @@ use tokio::sync::watch;
 pub struct EncodedFrame {
     pub seq: u64,
     pub jpeg: Vec<u8>,
+    /// 帧原始尺寸元数据;下游目前只用 jpeg(解码后自带尺寸),保留备未来用(如状态上报)。
+    #[allow(dead_code)]
     pub width: u32,
+    #[allow(dead_code)]
     pub height: u32,
 }
 
 /// 对缓冲做采样 FNV-1a hash(变化检测用)。只取 ~1024 个等距采样点,
 /// 静止时哪怕 WGC 高频来帧,这步也几乎零成本;幻灯片切页是大面积变化,采样必然命中。
 pub fn sample_hash(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xcbf29ce484222325; // FNV-1a 64 位 offset basis
     let n = bytes.len();
     if n == 0 {
         return h;
@@ -26,10 +29,10 @@ pub fn sample_hash(bytes: &[u8]) -> u64 {
     while k < samples {
         let idx = k * n / samples;
         h ^= bytes[idx] as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x100000001b3); // FNV-1a 64 位 prime
         k += 1;
     }
-    // 末字节兜底(stride 跨过尾部时仍纳入长度敏感)
+    // 长度兜底:采样点不一定覆盖末字节,把长度也折进 hash 以保持尺寸敏感。
     h ^= (n as u64).wrapping_mul(0x100000001b3);
     h
 }
@@ -65,6 +68,7 @@ impl FrameBroker {
 
     /// 发布一帧(seq 自增)。用 send_replace:即便当前无订阅者也写入最新值,
     /// 这样 latest() 始终反映最近一帧(watch::send 在无订阅者时返回 Err 且不更新存值)。
+    /// 注意:`&self` 但仅供**单一发布者**(编码线程)调用;并发调用可能读到相同 seq、产生重复序号。
     pub fn publish(&self, jpeg: Vec<u8>, width: u32, height: u32) {
         let seq = self.tx.borrow().seq.wrapping_add(1); // 临时 borrow 在本语句末即 drop,不与 send 争锁
         self.tx.send_replace(Arc::new(EncodedFrame { seq, jpeg, width, height }));
