@@ -1,22 +1,18 @@
 <script setup lang="ts">
 // 实时捕获预览(只读监看)+ COM 状态头条带。
-// 预览图复用主持人端的 /api/snapshot 链式刷新;头条带轮询 get_slide_state(IPC)。
-import { ref, onMounted, onUnmounted, watch } from "vue";
-import { storeToRefs } from "pinia";
+// 帧走 Tauri IPC(get_snapshot,进程内 → 避免 webview 跨源拉环回 HTTP);头条带轮询 get_slide_state。
+import { ref, onMounted, onUnmounted } from "vue";
 
 import { api, type SlideState } from "../utils/api";
-import { useNetworkState } from "../stores/networkState";
-
-const net = useNetworkState();
-const { serverPort, token } = storeToRefs(net);
 
 const slide = ref<SlideState | null>(null);
-const img = ref<HTMLImageElement | null>(null);
+const frameSrc = ref("");
 const frameOk = ref(false);
-let timer: number | undefined;
-let started = false;
+let stateTimer: number | undefined;
+let frameTimer: number | undefined;
+let alive = true;
 
-async function poll() {
+async function pollState() {
   try {
     slide.value = await api.getSlideState();
   } catch {
@@ -24,42 +20,28 @@ async function poll() {
   }
 }
 
-// 链式刷新:上一帧 load/error 后再排下一帧,避免慢链路堆积。
-function loadFrame() {
-  if (!img.value || !token.value) return;
-  img.value.src =
-    "http://127.0.0.1:" +
-    serverPort.value +
-    "/api/snapshot.jpg?token=" +
-    encodeURIComponent(token.value) +
-    "&t=" +
-    Date.now();
-}
-function onFrameLoad() {
-  frameOk.value = true;
-  window.setTimeout(loadFrame, 300);
-}
-function onFrameError() {
-  frameOk.value = false;
-  window.setTimeout(loadFrame, 1000);
-}
-
-// token 在首次状态轮询后才就位;就位即启动链式刷新(仅一次)。
-// 注:latch 假设 token 进程内不变(后端启动时一次性生成,见 lib.rs);若将来支持轮换 token,需去掉 started 改为监听空→非空跳变。
-function kick() {
-  if (started || !token.value) return;
-  started = true;
-  loadFrame();
+// 帧链:取一帧 → 显示 → 排下一帧(自调度,慢捕获不堆积)。
+async function loadFrame() {
+  if (!alive) return;
+  try {
+    const b64 = await api.getSnapshot();
+    frameSrc.value = "data:image/jpeg;base64," + b64;
+    frameOk.value = true;
+  } catch {
+    frameOk.value = false;
+  }
+  if (alive) frameTimer = window.setTimeout(loadFrame, 400);
 }
 
 onMounted(() => {
-  void poll();
-  timer = window.setInterval(poll, 1500);
-  kick();
+  void pollState();
+  stateTimer = window.setInterval(pollState, 1500);
+  void loadFrame();
 });
-watch(token, kick);
 onUnmounted(() => {
-  if (timer) window.clearInterval(timer);
+  alive = false;
+  if (stateTimer) window.clearInterval(stateTimer);
+  if (frameTimer) window.clearTimeout(frameTimer);
 });
 </script>
 
@@ -78,17 +60,8 @@ onUnmounted(() => {
       </span>
     </header>
     <div class="stage">
-      <img
-        ref="img"
-        v-show="frameOk"
-        alt="PPT 捕获预览"
-        draggable="false"
-        @load="onFrameLoad"
-        @error="onFrameError"
-      />
-      <div class="placeholder" v-if="!frameOk">
-        {{ token ? "等待捕获 · 未选择 PPT 窗口" : "服务未就绪" }}
-      </div>
+      <img v-show="frameOk" :src="frameSrc" alt="PPT 捕获预览" draggable="false" />
+      <div class="placeholder" v-if="!frameOk">等待捕获 · 未选择 PPT 窗口</div>
     </div>
   </section>
 </template>
