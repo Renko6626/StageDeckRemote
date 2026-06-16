@@ -7,6 +7,7 @@ import ControlStatus from "../components/ControlStatus.vue";
 import WindowPicker from "../components/WindowPicker.vue";
 import QrCodePanel from "../components/QrCodePanel.vue";
 import LocalControlPanel from "../components/LocalControlPanel.vue";
+import DirectorTimer from "../components/DirectorTimer.vue";
 import LogPanel from "../components/LogPanel.vue";
 import DirectorPreview from "../components/DirectorPreview.vue";
 import DirectorMessages from "../components/DirectorMessages.vue";
@@ -101,6 +102,7 @@ onUnmounted(() => {
       <WindowPicker />
       <ControlStatus />
       <LocalControlPanel />
+      <DirectorTimer />
       <DirectorMessages />
       <QrCodePanel />
     </aside>

@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import { api, type DirectorStatus, type LogEntry, type TargetWindow } from "../utils/api";
+import { api, type DirectorStatus, type LogEntry, type TargetWindow, type TimerView } from "../utils/api";
 import { useNetworkState } from "./networkState";
 
 export const useAppState = defineStore("app", () => {
@@ -12,6 +12,7 @@ export const useAppState = defineStore("app", () => {
   const selectedWindow = ref<TargetWindow | null>(null);
   const activeClientId = ref<string | null>(null);
   const logs = ref<LogEntry[]>([]);
+  const timer = ref<TimerView | null>(null);
 
   function applyStatus(s: DirectorStatus) {
     remoteEnabled.value = s.remote_enabled;
@@ -19,6 +20,7 @@ export const useAppState = defineStore("app", () => {
     presenterUnlocked.value = s.presenter_unlocked;
     selectedWindow.value = s.selected_window;
     activeClientId.value = s.active_client_id;
+    timer.value = s.timer;
 
     const net = useNetworkState();
     net.update({
@@ -60,6 +62,18 @@ export const useAppState = defineStore("app", () => {
     await api.autoDetectPpt();
     await refresh();
   }
+  async function timerStart(ms: number) {
+    await api.timerStart(ms);
+    await refresh();
+  }
+  async function timerToggle() {
+    await api.timerToggle();
+    await refresh();
+  }
+  async function timerReset() {
+    await api.timerReset();
+    await refresh();
+  }
 
   return {
     remoteEnabled,
@@ -73,5 +87,9 @@ export const useAppState = defineStore("app", () => {
     forceLock,
     selectWindow,
     autoDetectPpt,
+    timer,
+    timerStart,
+    timerToggle,
+    timerReset,
   };
 });
