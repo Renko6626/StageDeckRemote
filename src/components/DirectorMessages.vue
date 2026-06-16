@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 快捷消息预制编辑(导播)+ 点一条发给主持人 + 提示音开关。
+// 快捷消息预制编辑(导播)+ 点一条发给主持人。
 import { ref, onMounted } from "vue";
 
 import { api, type PresetMessage } from "../utils/api";
@@ -7,7 +7,6 @@ import { api, type PresetMessage } from "../utils/api";
 const presets = ref<PresetMessage[]>([]);
 const editing = ref(false);
 const drafts = ref<string[]>([]);
-const chimeOn = ref(localStorage.getItem("sd.dir.toastChime") !== "off");
 const error = ref<string | null>(null);
 const sentFlash = ref("");
 let flashTimer: number | undefined;
@@ -53,10 +52,6 @@ async function save() {
 function cancel() {
   editing.value = false;
 }
-function toggleChime() {
-  chimeOn.value = !chimeOn.value;
-  localStorage.setItem("sd.dir.toastChime", chimeOn.value ? "on" : "off");
-}
 
 onMounted(load);
 </script>
@@ -76,9 +71,6 @@ onMounted(load);
       <p v-if="sentFlash" class="sent">{{ sentFlash }}</p>
       <div class="row">
         <button @click="startEdit">编辑</button>
-        <button class="chime" :class="{ on: chimeOn }" @click="toggleChime">
-          提示音：{{ chimeOn ? "开" : "关" }}
-        </button>
       </div>
     </template>
 
@@ -149,11 +141,6 @@ onMounted(load);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   padding: 8px 10px;
-}
-.chime.on {
-  background: var(--ink);
-  color: #000;
-  border-color: var(--ink);
 }
 .edit {
   display: grid;

@@ -80,6 +80,14 @@ export const useAppState = defineStore("app", () => {
     await api.releaseController();
     await refresh();
   }
+  async function regenerateToken() {
+    await api.regenerateToken();
+    await refresh();
+  }
+  async function setServerPort(port: number) {
+    await api.setServerPort(port);
+    await refresh();
+  }
 
   return {
     remoteEnabled,
@@ -99,5 +107,7 @@ export const useAppState = defineStore("app", () => {
     timerReset,
     presenterOnline,
     releaseController,
+    regenerateToken,
+    setServerPort,
   };
 });

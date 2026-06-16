@@ -74,4 +74,6 @@ export const api = {
   timerToggle: () => invoke<void>("timer_toggle"),
   timerReset: () => invoke<void>("timer_reset"),
   releaseController: () => invoke<void>("release_controller"),
+  regenerateToken: () => invoke<void>("regenerate_token"),
+  setServerPort: (port: number) => invoke<void>("set_server_port", { port }),
 };
