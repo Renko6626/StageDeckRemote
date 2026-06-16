@@ -59,22 +59,18 @@ struct TokenQuery {
 }
 
 fn token_ok(state: &AppState, token: &Option<String>) -> bool {
-    let expected = state
-        .inner
-        .lock()
-        .map(|i| i.token.clone())
-        .unwrap_or_default();
+    let expected = {
+        let i = state.lock();
+        i.token.clone()
+    };
     matches!(token, Some(t) if auth::verify(t, &expected))
 }
 
 /// 请求体 client_id 是否为当前控制端(单控制端门控)。
 fn is_controller(state: &AppState, cid: &Option<String>) -> bool {
     let c = cid.as_deref();
-    state
-        .inner
-        .lock()
-        .map(|i| c.is_some() && i.active_client_id.as_deref() == c)
-        .unwrap_or(false)
+    let i = state.lock();
+    c.is_some() && i.active_client_id.as_deref() == c
 }
 
 fn json_err(code: StatusCode, reason: &str) -> Response {
@@ -128,7 +124,7 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     let body = {
-        let mut i = state.inner.lock().expect("state lock poisoned");
+        let mut i = state.lock();
         let is_controller = match &q.cid {
             Some(cid) => crate::app_state::note_presence_and_claim(&mut i, cid, crate::app_state::now_ms()),
             None => false,
@@ -195,7 +191,7 @@ async fn click(State(state): State<Arc<AppState>>, Json(req): Json<ClickReq>) ->
     }
     // 取目标窗口 handle，再实时读取矩形（窗口可能已移动）。
     let handle = {
-        let i = state.inner.lock().expect("state lock poisoned");
+        let i = state.lock();
         i.selected_window.as_ref().map(|w| w.handle)
     };
     let Some(handle) = handle else {
@@ -265,7 +261,7 @@ fn page_turn(
         Ok(()) => Ok(()),
         Err(_) => {
             if let Some(handle) = {
-                let i = state.inner.lock().expect("state lock poisoned");
+                let i = state.lock();
                 i.selected_window.as_ref().map(|w| w.handle)
             } {
                 crate::window_manager::bring_to_front(handle);
@@ -294,7 +290,8 @@ async fn lock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) ->
     if !is_controller(&state, &req.client_id) {
         return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.presenter_unlocked = false;
     }
     log::event(&state, "主持人端：锁定");
@@ -312,7 +309,8 @@ async fn unlock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) 
     if !state.button_allowed() {
         return json_err(StatusCode::FORBIDDEN, "remote_disabled");
     }
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.presenter_unlocked = true;
     }
     log::event(&state, "主持人端：释放控制");
@@ -397,11 +395,10 @@ async fn messages(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
     if !token_ok(&state, &q.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    let presets = state
-        .inner
-        .lock()
-        .map(|i| i.presets.clone())
-        .unwrap_or_default();
+    let presets = {
+        let i = state.lock();
+        i.presets.clone()
+    };
     Json(presets).into_response()
 }
 
@@ -418,9 +415,11 @@ async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     // 只允许发送预制列表里的消息:校验 id,取服务端当前文本。
-    let text = state.inner.lock().ok().and_then(|i| {
+    // 取完文本即释放 guard,避免后续 send/log 在持锁下执行(死锁纪律)。
+    let text = {
+        let i = state.lock();
         i.presets.iter().find(|p| p.id == req.id).map(|p| p.text.clone())
-    });
+    };
     let Some(text) = text else {
         return json_err(StatusCode::BAD_REQUEST, "unknown_message");
     };

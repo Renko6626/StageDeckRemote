@@ -31,7 +31,7 @@ pub struct DirectorStatus {
 
 #[tauri::command]
 pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
-    let i = state.inner.lock().expect("state lock poisoned");
+    let i = state.lock();
     let local_ip = network::local_ipv4();
     let access_url = local_ip
         .as_ref()
@@ -64,7 +64,8 @@ pub fn auto_detect_ppt(state: State<Arc<AppState>>) -> Option<TargetWindow> {
     let found = window_manager::find_powerpoint();
     if let Some(win) = found.clone() {
         let handle = win.handle;
-        if let Ok(mut i) = state.inner.lock() {
+        {
+            let mut i = state.lock();
             i.selected_window = Some(win);
         }
         state.capture.start(handle);
@@ -77,7 +78,8 @@ pub fn auto_detect_ppt(state: State<Arc<AppState>>) -> Option<TargetWindow> {
 pub fn select_window(state: State<Arc<AppState>>, window: TargetWindow) {
     let title = window.title.clone();
     let handle = window.handle;
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.selected_window = Some(window);
     }
     state.capture.start(handle);
@@ -86,7 +88,8 @@ pub fn select_window(state: State<Arc<AppState>>, window: TargetWindow) {
 
 #[tauri::command]
 pub fn set_remote_enabled(state: State<Arc<AppState>>, enabled: bool) {
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.remote_enabled = enabled;
         if !enabled {
             // 关闭远程时一并清掉主持人解锁，确保彻底接管。
@@ -98,7 +101,8 @@ pub fn set_remote_enabled(state: State<Arc<AppState>>, enabled: bool) {
 
 #[tauri::command]
 pub fn force_lock(state: State<Arc<AppState>>, locked: bool) {
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.control_locked = locked;
         if locked {
             i.presenter_unlocked = false;
@@ -121,10 +125,9 @@ pub fn local_prev(state: State<Arc<AppState>>) -> Result<(), String> {
 
 /// 翻页前激活选中窗口（本地兜底翻页同样需要焦点）。
 fn activate_selected(state: &AppState) {
-    if let Ok(i) = state.inner.lock() {
-        if let Some(w) = i.selected_window.as_ref() {
-            window_manager::bring_to_front(w.handle);
-        }
+    let i = state.lock();
+    if let Some(w) = i.selected_window.as_ref() {
+        window_manager::bring_to_front(w.handle);
     }
 }
 
@@ -155,14 +158,16 @@ pub fn get_slide_state() -> crate::ppt_com::SlideState {
 /// 导播 GUI:读取预制快捷消息列表。
 #[tauri::command]
 pub fn get_presets(state: State<Arc<AppState>>) -> Vec<crate::app_state::PresetMessage> {
-    state.inner.lock().map(|i| i.presets.clone()).unwrap_or_default()
+    let i = state.lock();
+    i.presets.clone()
 }
 
 /// 导播 GUI:用一组文本替换预制消息(id 服务端派生),并持久化。
 #[tauri::command]
 pub fn set_presets(app: tauri::AppHandle, state: State<Arc<AppState>>, texts: Vec<String>) {
     let presets = crate::presets::from_texts(&texts);
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.presets = presets.clone();
     }
     if let Ok(dir) = app.path().app_config_dir() {
@@ -177,9 +182,7 @@ pub fn set_presets(app: tauri::AppHandle, state: State<Arc<AppState>>, texts: Ve
 #[tauri::command]
 pub fn send_to_presenter(state: State<Arc<AppState>>, id: String) {
     let sent = {
-        let Ok(mut i) = state.inner.lock() else {
-            return;
-        };
+        let mut i = state.lock();
         let Some(text) = i.presets.iter().find(|p| p.id == id).map(|p| p.text.clone()) else {
             return; // id 不在池中:不改动(前端按池内 id 调用,不会非法)
         };
@@ -208,7 +211,8 @@ pub fn get_snapshot(state: State<Arc<AppState>>) -> Result<String, String> {
 /// 导播 GUI:启动计时(从满开始倒计时,ms 毫秒)。
 #[tauri::command]
 pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.timer = Some(crate::app_state::TimerState {
             duration_ms: ms,
             running: true,
@@ -223,9 +227,7 @@ pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {
 #[tauri::command]
 pub fn timer_toggle(state: State<Arc<AppState>>) {
     let msg = {
-        let Ok(mut i) = state.inner.lock() else {
-            return;
-        };
+        let mut i = state.lock();
         let Some(t) = i.timer.as_mut() else {
             return;
         };
@@ -246,7 +248,8 @@ pub fn timer_toggle(state: State<Arc<AppState>>) {
 /// 导播 GUI:重置(清空)计时。
 #[tauri::command]
 pub fn timer_reset(state: State<Arc<AppState>>) {
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.timer = None;
     }
     log::event(&state, "计时:重置");
@@ -255,7 +258,8 @@ pub fn timer_reset(state: State<Arc<AppState>>) {
 /// 导播 GUI:释放控制权(清空控制端,下一台轮询即接管)。
 #[tauri::command]
 pub fn release_controller(state: State<Arc<AppState>>) {
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.active_client_id = None;
     }
     log::event(&state, "导播:释放控制权");
@@ -265,7 +269,8 @@ pub fn release_controller(state: State<Arc<AppState>>) {
 #[tauri::command]
 pub fn regenerate_token(state: State<Arc<AppState>>) {
     let new = crate::auth::generate_token();
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.token = new;
         i.active_client_id = None; // 都要重连,顺带释放控制端
     }

@@ -29,7 +29,8 @@ pub fn event(state: &AppState, message: impl Into<String>) {
         time_ms: now_ms(),
         message: message.clone(),
     };
-    if let Ok(mut inner) = state.inner.lock() {
+    {
+        let mut inner = state.lock();
         inner.logs.push(entry);
         let len = inner.logs.len();
         if len > MAX_LOGS {
@@ -41,12 +42,7 @@ pub fn event(state: &AppState, message: impl Into<String>) {
 
 /// 取最近 `max` 条日志（导播端 GUI 展示用）。
 pub fn recent(state: &AppState, max: usize) -> Vec<LogEntry> {
-    state
-        .inner
-        .lock()
-        .map(|inner| {
-            let start = inner.logs.len().saturating_sub(max);
-            inner.logs[start..].to_vec()
-        })
-        .unwrap_or_default()
+    let inner = state.lock();
+    let start = inner.logs.len().saturating_sub(max);
+    inner.logs[start..].to_vec()
 }

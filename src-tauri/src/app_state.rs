@@ -65,6 +65,8 @@ pub struct TimerView {
     pub duration_ms: u64,
 }
 
+// 挂钟时间(非单调)。计时器可容忍偶发回拨:导播 GUI 与主持人端每次轮询都用服务端算好的 remaining_ms 重新锚定,
+// 最坏只是一个轮询周期(≤1.5s)的视觉抖动,故不引入 Instant。也用于日志/消息时间戳。
 /// 服务端当前毫秒时间。
 pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -131,6 +133,12 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 中毒自恢复的锁访问：取走被 poison 的 guard 内部值，绝不传播 panic。
+    /// 全仓统一用它取代 `self.inner.lock()`，消除 `.expect` 会 panic、`if let Ok` 会静默 no-op 的不一致。
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn new(token: String, server_port: u16, message_tx: UnboundedSender<HostMessage>) -> Self {
         AppState {
             inner: Mutex::new(Inner {
@@ -156,18 +164,14 @@ impl AppState {
 
     /// 三层锁全部放行才允许"点击预览图"这类隐式操作（spec §13.2）。
     pub fn click_allowed(&self) -> bool {
-        self.inner
-            .lock()
-            .map(|i| i.remote_enabled && !i.control_locked && i.presenter_unlocked)
-            .unwrap_or(false)
+        let i = self.lock();
+        i.remote_enabled && !i.control_locked && i.presenter_unlocked
     }
 
     /// 显式按钮（翻页等）只要求远程开启且未被强制锁。
     pub fn button_allowed(&self) -> bool {
-        self.inner
-            .lock()
-            .map(|i| i.remote_enabled && !i.control_locked)
-            .unwrap_or(false)
+        let i = self.lock();
+        i.remote_enabled && !i.control_locked
     }
 }
 
@@ -206,7 +210,7 @@ mod tests {
     fn default_is_not_force_locked() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let st = AppState::new("t".into(), 0, tx);
-        let i = st.inner.lock().unwrap();
+        let i = st.lock();
         assert!(!i.remote_enabled, "远程默认关");
         assert!(!i.control_locked, "强制锁默认释放(新默认)");
         assert!(!i.presenter_unlocked, "默认未解锁");
@@ -220,14 +224,14 @@ mod tests {
         assert!(!st.button_allowed());
         assert!(!st.click_allowed());
         // 开远程、未强锁 → 导播层放行(button_allowed 真),但主持人未 ARM → 动作仍禁
-        st.inner.lock().unwrap().remote_enabled = true;
+        st.lock().remote_enabled = true;
         assert!(st.button_allowed());
         assert!(!st.click_allowed());
         // 主持人 ARM → 一切动作放行
-        st.inner.lock().unwrap().presenter_unlocked = true;
+        st.lock().presenter_unlocked = true;
         assert!(st.click_allowed());
         // 紧急强锁压制一切
-        st.inner.lock().unwrap().control_locked = true;
+        st.lock().control_locked = true;
         assert!(!st.button_allowed());
         assert!(!st.click_allowed());
     }
@@ -243,7 +247,7 @@ mod tests {
     fn claim_first_come_takeover_viewonly() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let st = AppState::new("t".into(), 0, tx);
-        let mut i = st.inner.lock().unwrap();
+        let mut i = st.lock();
         // 空槽 → A 认领
         assert!(note_presence_and_claim(&mut i, "A", 1000));
         assert_eq!(i.active_client_id.as_deref(), Some("A"));
@@ -267,5 +271,22 @@ mod tests {
         assert_eq!(timer_remaining_ms(5000, true, 0, 0, 7000), -2000);
         // 未启动(running=false,elapsed=0)→ 满
         assert_eq!(timer_remaining_ms(5000, false, 0, 0, 123), 5000);
+    }
+
+    #[test]
+    fn lock_recovers_from_poison() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let app = std::sync::Arc::new(AppState::new("tok".into(), 8787, tx));
+        let a2 = app.clone();
+        // 在持有 guard 时 panic → 毒化 mutex；join 吞掉子线程的 panic。
+        let _ = std::thread::spawn(move || {
+            let _g = a2.lock();
+            panic!("poison it");
+        })
+        .join();
+        // 中毒后仍必须可读可写，且不 panic。
+        let mut g = app.lock();
+        g.remote_enabled = true;
+        assert!(g.remote_enabled);
     }
 }

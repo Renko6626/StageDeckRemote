@@ -53,10 +53,9 @@ pub fn run() {
             if let Ok(dir) = app.path().app_config_dir() {
                 let cfg = config::Config::load(&dir.join("config.json"));
                 let presets_loaded = presets::load(&dir.join("presets.json"));
-                if let Ok(mut i) = preset_state.inner.lock() {
-                    i.server_port = cfg.server_port;
-                    i.presets = presets_loaded;
-                }
+                let mut i = preset_state.lock();
+                i.server_port = cfg.server_port;
+                i.presets = presets_loaded;
             }
 
             // 后台启动局域网 Web 服务(主持人端入口)。
@@ -96,15 +95,14 @@ pub fn run() {
                 loop {
                     interval.tick().await;
                     let now = app_state::now_ms();
-                    let (online, still_assigned) = if let Ok(mut i) = ws.inner.lock() {
+                    let (online, still_assigned) = {
+                        let mut i = ws.lock();
                         let on = app_state::controller_online(&i, now);
                         let assigned = i.active_client_id.is_some();
                         if was_online && !on {
                             i.active_client_id = None;
                         }
                         (on, assigned)
-                    } else {
-                        (was_online, false)
                     };
                     // 仅"还分配着但心跳过期"(真断线)才报警;导播主动释放(已置 None)不算断线。
                     if was_online && !online && still_assigned {
