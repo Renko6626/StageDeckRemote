@@ -176,7 +176,6 @@ async fn snapshot(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
 #[derive(Deserialize)]
 struct ClickReq {
     token: Option<String>,
-    #[allow(dead_code)]
     client_id: Option<String>,
     x: f64,
     y: f64,
@@ -235,7 +234,6 @@ async fn click(State(state): State<Arc<AppState>>, Json(req): Json<ClickReq>) ->
 #[derive(Deserialize)]
 struct ActionReq {
     token: Option<String>,
-    #[allow(dead_code)]
     client_id: Option<String>,
 }
 
@@ -384,7 +382,6 @@ async fn slide_state(State(state): State<Arc<AppState>>, Query(q): Query<TokenQu
 #[derive(Deserialize)]
 struct ActionReqBody {
     token: Option<String>,
-    #[allow(dead_code)]
     client_id: Option<String>,
     shape: String,
 }
@@ -431,8 +428,6 @@ async fn messages(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
 #[derive(Deserialize)]
 struct MessageReq {
     token: Option<String>,
-    #[allow(dead_code)]
-    client_id: Option<String>,
     id: String,
 }
 
@@ -454,7 +449,7 @@ async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>
         text: text.clone(),
         at_ms: now_ms(),
     };
-    let _ = state.message_tx.send(msg);
+    let _ = state.message_tx.try_send(msg);
     crate::log::event(&state, format!("收到主持人消息：{text}"));
     ok_json()
 }
