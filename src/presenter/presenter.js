@@ -30,6 +30,10 @@
     msgGrid: document.getElementById("msg-grid"),
     msgEmpty: document.getElementById("msg-empty"),
     msgSent: document.getElementById("msg-sent"),
+    dirBanner: document.getElementById("dir-banner"),
+    dirBannerText: document.getElementById("dir-banner-text"),
+    dirBannerTime: document.getElementById("dir-banner-time"),
+    dirBannerX: document.getElementById("dir-banner-x"),
   };
 
   var state = {
@@ -152,6 +156,7 @@
         state.unlocked = state.allowed && s.presenter_unlocked;
         state.com = data[1] || state.com;
         render();
+        handleDirectorMessage(s.director_message);
       })
       .catch(function () {
         setDown(false);
@@ -278,6 +283,32 @@
       .then(function (r) { flashSent(r && r.ok ? "已发送 ✓" : "发送失败"); })
       .catch(function () { flashSent("发送失败"); });
   });
+
+  // ── director → presenter banner ──
+  var lastDirSeq = null;
+  var dirBannerTimer = null;
+  function fmtHM(ms) {
+    var d = new Date(ms);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+  function handleDirectorMessage(dm) {
+    var seq = dm ? dm.seq : 0;
+    if (lastDirSeq === null) { lastDirSeq = seq; return; } // 首帧只记基线,不回放旧消息
+    if (dm && dm.seq > lastDirSeq) {
+      lastDirSeq = dm.seq;
+      el.dirBannerText.textContent = dm.text;
+      el.dirBannerTime.textContent = fmtHM(dm.at_ms);
+      el.dirBanner.hidden = false;
+      if (dirBannerTimer) clearTimeout(dirBannerTimer);
+      dirBannerTimer = setTimeout(hideDirBanner, 10000);
+    }
+  }
+  function hideDirBanner() {
+    if (dirBannerTimer) clearTimeout(dirBannerTimer);
+    el.dirBanner.hidden = true;
+  }
+  el.dirBannerX.addEventListener("click", hideDirBanner);
 
   // ── boot ──
   render();
