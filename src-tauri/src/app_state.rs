@@ -40,6 +40,14 @@ pub struct HostMessage {
     pub at_ms: u64,
 }
 
+/// 导播→主持人的即时通知(临时,不持久化)。seq 单调自增,供主持人检测新消息。
+#[derive(Clone, Debug, Serialize)]
+pub struct DirectorMessage {
+    pub seq: u64,
+    pub text: String,
+    pub at_ms: u64,
+}
+
 /// 受 `Mutex` 保护的可变运行状态。
 pub struct Inner {
     pub selected_window: Option<TargetWindow>,
@@ -55,6 +63,8 @@ pub struct Inner {
     pub logs: Vec<LogEntry>,
     /// 导播可编辑的预制快捷消息(同步给主持人)。
     pub presets: Vec<PresetMessage>,
+    /// 导播→主持人的最新通知(临时;主持人轮询 status 取走显示)。
+    pub director_message: Option<DirectorMessage>,
 }
 
 pub struct AppState {
@@ -79,6 +89,7 @@ impl AppState {
                 server_port,
                 logs: Vec::new(),
                 presets: crate::presets::default_presets(),
+                director_message: None,
             }),
             capture: crate::capture::CaptureManager::new(),
             message_tx,
