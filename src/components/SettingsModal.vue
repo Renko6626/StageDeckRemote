@@ -30,14 +30,27 @@ async function resetToken() {
     return;
   }
   confirmReset.value = false;
-  await app.regenerateToken();
-  flash("访问码已重置 — 主持人需重新扫码");
+  try {
+    await app.regenerateToken();
+    flash("访问码已重置 — 主持人需重新扫码");
+  } catch {
+    flash("重置失败 — 请重试");
+  }
 }
 async function savePort() {
-  const p = Math.min(65535, Math.max(1, Math.floor(portInput.value || 0)));
-  portInput.value = p;
-  await app.setServerPort(p);
-  flash("端口已保存 — 重启后生效");
+  // 空/非法输入(清空输入框会得到 NaN)直接拒绝,不静默写入错误端口。
+  const raw = Math.floor(portInput.value);
+  if (!Number.isFinite(raw) || raw < 1 || raw > 65535) {
+    flash("请输入有效端口(1–65535)");
+    return;
+  }
+  portInput.value = raw;
+  try {
+    await app.setServerPort(raw);
+    flash("端口已保存 — 重启后生效");
+  } catch {
+    flash("端口保存失败 — 请重试");
+  }
 }
 </script>
 
