@@ -9,11 +9,6 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub server_port: u16,
     pub last_selected_window_title: String,
-    pub obs_enabled: bool,
-    pub obs_url: String,
-    pub obs_password: String,
-    pub ppt_scene_name: String,
-    pub black_scene_name: String,
 }
 
 impl Default for Config {
@@ -21,11 +16,6 @@ impl Default for Config {
         Self {
             server_port: 8787,
             last_selected_window_title: String::new(),
-            obs_enabled: false,
-            obs_url: "ws://127.0.0.1:4455".into(),
-            obs_password: String::new(),
-            ppt_scene_name: "PPT".into(),
-            black_scene_name: "Black".into(),
         }
     }
 }
