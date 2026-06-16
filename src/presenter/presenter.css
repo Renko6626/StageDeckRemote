@@ -490,3 +490,8 @@ body::before {
   cursor: pointer;
   padding: 2px 6px;
 }
+
+/* ─── show timer (status bar) ─── */
+#timer-stat.over b {
+  color: var(--danger);
+}

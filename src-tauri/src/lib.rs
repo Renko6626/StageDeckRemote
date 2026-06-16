@@ -104,6 +104,9 @@ pub fn run() {
             commands::set_presets,
             commands::send_to_presenter,
             commands::get_snapshot,
+            commands::timer_start,
+            commands::timer_toggle,
+            commands::timer_reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

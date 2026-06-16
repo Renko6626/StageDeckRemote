@@ -34,6 +34,8 @@
     dirBannerText: document.getElementById("dir-banner-text"),
     dirBannerTime: document.getElementById("dir-banner-time"),
     dirBannerX: document.getElementById("dir-banner-x"),
+    timerStat: document.getElementById("timer-stat"),
+    timerVal: document.getElementById("timer-val"),
   };
 
   var state = {
@@ -157,6 +159,7 @@
         state.com = data[1] || state.com;
         render();
         handleDirectorMessage(s.director_message);
+        handleTimer(s.timer);
       })
       .catch(function () {
         setDown(false);
@@ -309,6 +312,28 @@
     el.dirBanner.hidden = true;
   }
   el.dirBannerX.addEventListener("click", hideDirBanner);
+
+  // ── show timer (status bar, local tick) ──
+  var timerBase = null; // {remaining, running, at}
+  function handleTimer(t) {
+    if (!t) { timerBase = null; el.timerStat.hidden = true; return; }
+    timerBase = { remaining: t.remaining_ms, running: t.running, at: Date.now() };
+    el.timerStat.hidden = false;
+  }
+  function fmtTimer(ms) {
+    var neg = ms < 0;
+    var s = Math.floor(Math.abs(ms) / 1000);
+    var m = Math.floor(s / 60);
+    s = s % 60;
+    return (neg ? "+" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+  }
+  function tickTimer() {
+    if (!timerBase) return;
+    var live = timerBase.running ? timerBase.remaining - (Date.now() - timerBase.at) : timerBase.remaining;
+    el.timerVal.textContent = fmtTimer(live);
+    el.timerStat.classList.toggle("over", live < 0);
+  }
+  setInterval(tickTimer, 250);
 
   // ── boot ──
   render();

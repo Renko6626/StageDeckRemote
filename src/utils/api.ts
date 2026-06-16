@@ -21,6 +21,7 @@ export interface DirectorStatus {
   server_port: number;
   local_ip: string | null;
   access_url: string | null;
+  timer: TimerView | null;
 }
 
 export interface LogEntry {
@@ -47,6 +48,12 @@ export interface PresetMessage {
   text: string;
 }
 
+export interface TimerView {
+  remaining_ms: number;
+  running: boolean;
+  duration_ms: number;
+}
+
 export const api = {
   getStatus: () => invoke<DirectorStatus>("get_status"),
   listWindows: () => invoke<TargetWindow[]>("list_windows"),
@@ -62,4 +69,7 @@ export const api = {
   setPresets: (texts: string[]) => invoke<void>("set_presets", { texts }),
   sendToPresenter: (id: string) => invoke<void>("send_to_presenter", { id }),
   getSnapshot: () => invoke<string>("get_snapshot"),
+  timerStart: (ms: number) => invoke<void>("timer_start", { ms }),
+  timerToggle: () => invoke<void>("timer_toggle"),
+  timerReset: () => invoke<void>("timer_reset"),
 };

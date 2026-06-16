@@ -48,6 +48,58 @@ pub struct DirectorMessage {
     pub at_ms: u64,
 }
 
+/// 演出计时器状态(临时,不持久化)。
+#[derive(Clone, Debug)]
+pub struct TimerState {
+    pub duration_ms: u64,
+    pub running: bool,
+    pub started_at_ms: u64,
+    pub elapsed_before_ms: u64,
+}
+
+/// 计时展示视图(remaining 可为负 = 超时)。
+#[derive(Clone, Debug, Serialize)]
+pub struct TimerView {
+    pub remaining_ms: i64,
+    pub running: bool,
+    pub duration_ms: u64,
+}
+
+/// 服务端当前毫秒时间。
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 计时剩余毫秒(可为负=超时)。纯函数,便于单测。
+pub fn timer_remaining_ms(
+    duration_ms: u64,
+    running: bool,
+    started_at_ms: u64,
+    elapsed_before_ms: u64,
+    now_ms: u64,
+) -> i64 {
+    let live = elapsed_before_ms + if running { now_ms.saturating_sub(started_at_ms) } else { 0 };
+    duration_ms as i64 - live as i64
+}
+
+/// 由计时状态 + 当前时刻算出展示视图。纯函数。
+pub fn timer_view_of(t: &TimerState, now_ms: u64) -> TimerView {
+    TimerView {
+        remaining_ms: timer_remaining_ms(
+            t.duration_ms,
+            t.running,
+            t.started_at_ms,
+            t.elapsed_before_ms,
+            now_ms,
+        ),
+        running: t.running,
+        duration_ms: t.duration_ms,
+    }
+}
+
 /// 受 `Mutex` 保护的可变运行状态。
 pub struct Inner {
     pub selected_window: Option<TargetWindow>,
@@ -65,6 +117,8 @@ pub struct Inner {
     pub presets: Vec<PresetMessage>,
     /// 导播→主持人的最新通知(临时;主持人轮询 status 取走显示)。
     pub director_message: Option<DirectorMessage>,
+    /// 演出计时器(临时;两端轮询 status 取走显示)。
+    pub timer: Option<TimerState>,
 }
 
 pub struct AppState {
@@ -90,6 +144,7 @@ impl AppState {
                 logs: Vec::new(),
                 presets: crate::presets::default_presets(),
                 director_message: None,
+                timer: None,
             }),
             capture: crate::capture::CaptureManager::new(),
             message_tx,
@@ -145,5 +200,17 @@ mod tests {
         st.inner.lock().unwrap().control_locked = true;
         assert!(!st.button_allowed());
         assert!(!st.click_allowed());
+    }
+
+    #[test]
+    fn timer_remaining_running_paused_overrun() {
+        // 运行中:5s 时长,已过 2s(started=1000,now=3000)→ 剩 3s
+        assert_eq!(timer_remaining_ms(5000, true, 1000, 0, 3000), 3000);
+        // 暂停:累计 2s,不随 now 变 → 剩 3s
+        assert_eq!(timer_remaining_ms(5000, false, 0, 2000, 999_999), 3000);
+        // 超时:运行中已过 7s → 剩 -2s
+        assert_eq!(timer_remaining_ms(5000, true, 0, 0, 7000), -2000);
+        // 未启动(running=false,elapsed=0)→ 满
+        assert_eq!(timer_remaining_ms(5000, false, 0, 0, 123), 5000);
     }
 }
