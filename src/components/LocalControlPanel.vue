@@ -11,7 +11,7 @@ const { remoteEnabled, controlLocked } = storeToRefs(app);
 
 const lastError = ref<string | null>(null);
 
-// 统一捕获 IPC 失败并给出反馈（非 Windows 下 input/obs 会直接报错）。
+// 统一捕获 IPC 失败并给出反馈（非 Windows 下 input 会直接报错）。
 async function run(fn: () => Promise<unknown>) {
   lastError.value = null;
   try {
@@ -24,11 +24,9 @@ async function run(fn: () => Promise<unknown>) {
 const toggleRemote = () => run(() => app.setRemoteEnabled(!remoteEnabled.value));
 const toggleLock = () => run(() => app.forceLock(!controlLocked.value));
 
-// 本地翻页/黑屏直接走 IPC（不受远程开关影响，导播随时可操作）。
+// 本地翻页直接走 IPC（不受远程开关影响，导播随时可操作）。
 const next = () => run(() => api.localNext());
 const prev = () => run(() => api.localPrev());
-const black = () => run(() => api.localBlack());
-const restore = () => run(() => api.localRestore());
 </script>
 
 <template>
@@ -47,8 +45,6 @@ const restore = () => run(() => api.localRestore());
     <div class="grid">
       <button @click="prev">上一页</button>
       <button @click="next">下一页</button>
-      <button @click="black">黑屏</button>
-      <button @click="restore">恢复</button>
     </div>
 
     <p v-if="lastError" class="error">{{ lastError }}</p>
