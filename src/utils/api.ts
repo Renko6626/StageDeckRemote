@@ -22,6 +22,7 @@ export interface DirectorStatus {
   local_ip: string | null;
   access_url: string | null;
   timer: TimerView | null;
+  presenter_online: boolean;
 }
 
 export interface LogEntry {
@@ -72,4 +73,5 @@ export const api = {
   timerStart: (ms: number) => invoke<void>("timer_start", { ms }),
   timerToggle: () => invoke<void>("timer_toggle"),
   timerReset: () => invoke<void>("timer_reset"),
+  releaseController: () => invoke<void>("release_controller"),
 };

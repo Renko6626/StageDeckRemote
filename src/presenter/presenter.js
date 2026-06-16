@@ -5,6 +5,11 @@
   "use strict";
 
   var token = new URLSearchParams(location.search).get("token") || "";
+  var cid = localStorage.getItem("sd.presenter.cid");
+  if (!cid) {
+    cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem("sd.presenter.cid", cid);
+  }
   var SNAPSHOT_MIN = 300; // ms between snapshot frames
   var POLL = 900; // ms status + slide_state cadence
 
@@ -36,6 +41,7 @@
     dirBannerX: document.getElementById("dir-banner-x"),
     timerStat: document.getElementById("timer-stat"),
     timerVal: document.getElementById("timer-val"),
+    viewonly: document.getElementById("viewonly"),
   };
 
   var state = {
@@ -44,6 +50,7 @@
     tokenInvalid: false,
     allowed: false, // remote_enabled && !control_locked
     unlocked: false, // presenter_unlocked
+    isController: false,
     latency: null,
     mode: "main",
     com: { available: false, in_show: false, current: 0, total: 0, actions: [] },
@@ -56,7 +63,7 @@
       ? {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ token: token, client_id: "presenter" }, body)),
+          body: JSON.stringify(Object.assign({ token: token, client_id: cid }, body)),
         }
       : { method: "GET" };
     return fetch(path, opts);
@@ -64,7 +71,7 @@
 
   // ── gating ──（主持人侧一切操作都需 ARM 解锁)
   function canAct() {
-    return state.online && state.allowed && state.unlocked;
+    return state.online && state.allowed && state.unlocked && state.isController;
   }
 
   // ── render: single DOM update point ──
@@ -87,11 +94,13 @@
     el.showFlag.textContent = state.com.in_show ? "LIVE" : "IDLE";
     el.showFlag.classList.toggle("live", state.com.in_show);
 
+    el.viewonly.hidden = !(state.online && !state.isController);
+
     // ARM strip: armed = presenter 已解锁(控制权放出)
     var armed = state.unlocked;
     el.lockBtn.textContent = armed ? "● 已解锁 · 点此锁定" : "○ 已锁定 · 点此释放控制";
     el.lockBtn.classList.toggle("locked", !armed);
-    el.lockBtn.disabled = !state.online || (!state.allowed && !state.unlocked);
+    el.lockBtn.disabled = !state.online || !state.isController || (!state.allowed && !state.unlocked);
 
     // SYNC 锁定遮罩
     el.overlay.classList.toggle("hidden", armed);
@@ -140,7 +149,7 @@
   function poll() {
     var t0 = Date.now();
     Promise.all([
-      api("/api/status?token=" + encodeURIComponent(token)).then(handle401),
+      api("/api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401),
       api("/api/slide_state?token=" + encodeURIComponent(token)).then(handle401),
     ])
       .then(function (rs) {
@@ -156,6 +165,7 @@
         state.latency = Date.now() - t0;
         state.allowed = s.remote_enabled && !s.control_locked;
         state.unlocked = state.allowed && s.presenter_unlocked;
+        state.isController = !!s.is_controller;
         state.com = data[1] || state.com;
         render();
         handleDirectorMessage(s.director_message);
@@ -177,6 +187,7 @@
     state.online = false;
     state.connecting = false;
     state.unlocked = false;
+    state.isController = false;
     state.allowed = false;
     state.latency = null;
     state.tokenInvalid = !!tokenInvalid;

@@ -8,7 +8,7 @@ import { useNetworkState } from "../stores/networkState";
 
 const app = useAppState();
 const net = useNetworkState();
-const { remoteEnabled, controlLocked, presenterUnlocked, selectedWindow, activeClientId } =
+const { remoteEnabled, controlLocked, presenterUnlocked, selectedWindow, activeClientId, presenterOnline } =
   storeToRefs(app);
 const { online } = storeToRefs(net);
 
@@ -50,8 +50,19 @@ const canControl = computed(
         </span>
       </li>
       <li>
+        <span class="k">主持人</span>
+        <span class="v" :class="presenterOnline ? 'ok' : 'bad'">
+          {{ presenterOnline ? "在线" : "离线" }}
+        </span>
+      </li>
+      <li>
         <span class="k">当前控制端</span>
-        <span class="v">{{ activeClientId ?? "—" }}</span>
+        <span class="v">{{ activeClientId ? activeClientId.slice(0, 6) : "—" }}</span>
+      </li>
+      <li class="release-row">
+        <button class="release" :disabled="!activeClientId" @click="app.releaseController()">
+          释放控制权
+        </button>
       </li>
     </ul>
   </section>
@@ -107,5 +118,21 @@ const canControl = computed(
 /* warn = dim (not yet active but not dangerous) */
 .v.warn {
   color: var(--ink-dim);
+}
+.release-row {
+  border-bottom: none;
+  padding-top: 8px;
+}
+.release {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 8px;
+}
+.release:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 </style>

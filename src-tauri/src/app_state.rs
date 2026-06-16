@@ -32,7 +32,7 @@ pub struct PresetMessage {
     pub text: String,
 }
 
-/// 一条已收到的消息。本期 from 恒为 "presenter";字段保留以备导播→主持人。
+/// 一条要弹给导播的消息;`from` 标注来源("主持人" / "系统")。
 #[derive(Clone, Debug, Serialize)]
 pub struct HostMessage {
     pub from: String,
@@ -110,6 +110,8 @@ pub struct Inner {
     /// 主持人端本地解锁（spec §13.2 第 3 层）。
     pub presenter_unlocked: bool,
     pub active_client_id: Option<String>,
+    /// 当前控制端最后心跳(服务端时钟毫秒);配合 active_client_id 做在线判定。
+    pub active_seen_ms: u64,
     pub token: String,
     pub server_port: u16,
     pub logs: Vec<LogEntry>,
@@ -139,6 +141,7 @@ impl AppState {
                 control_locked: false,
                 presenter_unlocked: false,
                 active_client_id: None,
+                active_seen_ms: 0,
                 token,
                 server_port,
                 logs: Vec::new(),
@@ -166,6 +169,33 @@ impl AppState {
             .map(|i| i.remote_enabled && !i.control_locked)
             .unwrap_or(false)
     }
+}
+
+/// 客户端在线判定阈值(>该值无心跳视为离线)。
+pub const PRESENCE_TIMEOUT_MS: u64 = 4000;
+
+/// 最近一次心跳是否仍算在线。纯函数。
+pub fn client_online(last_seen_ms: u64, now_ms: u64) -> bool {
+    now_ms.saturating_sub(last_seen_ms) <= PRESENCE_TIMEOUT_MS
+}
+
+/// 记录 cid 心跳并按"先到为主 / 控制端离线可被接管"更新控制端;返回该 cid 是否为控制端。
+pub fn note_presence_and_claim(inner: &mut Inner, cid: &str, now_ms: u64) -> bool {
+    let controller_live =
+        inner.active_client_id.is_some() && client_online(inner.active_seen_ms, now_ms);
+    let is_me = inner.active_client_id.as_deref() == Some(cid);
+    if is_me || !controller_live {
+        inner.active_client_id = Some(cid.to_string());
+        inner.active_seen_ms = now_ms;
+        true
+    } else {
+        false
+    }
+}
+
+/// 控制端当前是否在线。
+pub fn controller_online(inner: &Inner, now_ms: u64) -> bool {
+    inner.active_client_id.is_some() && client_online(inner.active_seen_ms, now_ms)
 }
 
 #[cfg(test)]
@@ -200,6 +230,31 @@ mod tests {
         st.inner.lock().unwrap().control_locked = true;
         assert!(!st.button_allowed());
         assert!(!st.click_allowed());
+    }
+
+    #[test]
+    fn client_online_threshold() {
+        assert!(client_online(1000, 1000));
+        assert!(client_online(1000, 1000 + PRESENCE_TIMEOUT_MS));
+        assert!(!client_online(1000, 1000 + PRESENCE_TIMEOUT_MS + 1));
+    }
+
+    #[test]
+    fn claim_first_come_takeover_viewonly() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let st = AppState::new("t".into(), 0, tx);
+        let mut i = st.inner.lock().unwrap();
+        // 空槽 → A 认领
+        assert!(note_presence_and_claim(&mut i, "A", 1000));
+        assert_eq!(i.active_client_id.as_deref(), Some("A"));
+        // A 仍在线时 B 轮询 → 只读
+        assert!(!note_presence_and_claim(&mut i, "B", 1500));
+        assert_eq!(i.active_client_id.as_deref(), Some("A"));
+        // A 在线时 A 自己轮询 → 保持 + 刷新心跳
+        assert!(note_presence_and_claim(&mut i, "A", 2000));
+        // A 超时离线后 B 轮询 → 接管
+        assert!(note_presence_and_claim(&mut i, "B", 2000 + PRESENCE_TIMEOUT_MS + 1));
+        assert_eq!(i.active_client_id.as_deref(), Some("B"));
     }
 
     #[test]

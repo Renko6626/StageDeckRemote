@@ -26,6 +26,7 @@ pub struct DirectorStatus {
     pub local_ip: Option<String>,
     pub access_url: Option<String>,
     pub timer: Option<crate::app_state::TimerView>,
+    pub presenter_online: bool,
 }
 
 #[tauri::command]
@@ -49,6 +50,7 @@ pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
             .timer
             .as_ref()
             .map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
+        presenter_online: crate::app_state::controller_online(&i, crate::app_state::now_ms()),
     }
 }
 
@@ -248,4 +250,13 @@ pub fn timer_reset(state: State<Arc<AppState>>) {
         i.timer = None;
     }
     log::event(&state, "计时:重置");
+}
+
+/// 导播 GUI:释放控制权(清空控制端,下一台轮询即接管)。
+#[tauri::command]
+pub fn release_controller(state: State<Arc<AppState>>) {
+    if let Ok(mut i) = state.inner.lock() {
+        i.active_client_id = None;
+    }
+    log::event(&state, "导播:释放控制权");
 }

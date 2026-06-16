@@ -495,3 +495,18 @@ body::before {
 #timer-stat.over b {
   color: var(--danger);
 }
+
+/* ─── view-only banner ─── */
+.viewonly {
+  flex: 0 0 auto;
+  text-align: center;
+  padding: 7px;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+.viewonly[hidden] {
+  display: none;
+}
