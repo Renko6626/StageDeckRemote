@@ -24,9 +24,9 @@
 | 5 | `auth.rs:18` | Token 用 `==` 比较(短路)→ 同 WiFi 计时旁路;token 是唯一闸门且无限速 → 可无限探测。 | 常量时间比较(`constant_time_eq` crate),先比长度。 | ✅ #5 |
 | 6 | `routes.rs` router 无 layer | **无 body 大小上限**(截图很吃 CPU 且仅 token-gated;无显式上限)。 | 加 axum 原生 `DefaultBodyLimit`(无新依赖)。限速对 LAN 偏重,列入 §4。 | ✅ #6(body limit) |
 | 7 | `routes.rs:142` `status` | `/api/status` 把 `active_client_id` 明文返回给所有人 → 任何持 token 者可读到控制端 cid;配合可伪造 cid 可在 4s 心跳间隙抢控。 | 不向客户端返回 `active_client_id`(客户端只需 server 算好的 `is_controller`);确认 presenter.js 不读它。 | ✅ #7 |
-| 8 | `app_state.rs:69` | 计时器用 `SystemTime`(挂钟,非单调);演出中 NTP/手动改表回拨会让运行中计时器跳变(saturating 防 panic,自愈但抖动)。 | 计时基准改单调 `Instant`,挂钟只留给日志时间戳。 | ✅ #8 |
+| 8 | `app_state.rs:69` | 计时器用 `SystemTime`(挂钟,非单调)。**验证后降级:** `server_time` 被发出但全仓无人读,两端每次轮询都重锚 `remaining_ms`,最坏只是 ≤1.5s 的视觉抖动;`Instant` 改造会引入不可单测的进程态,得不偿失。 | **DEFER** —— 仅在 `now_ms` 处加注释说明挂钟可容忍(两端每轮重锚)。 | ⏸ 注释 |
 | 9 | `DirectorView.vue:81-92` | 1.5s 轮询无 in-flight 守卫;Windows 上 refresh >1.5s 时 tick 堆叠,晚到旧结果覆盖新状态。 | 加 `inFlight` 守卫跳过,或改 setTimeout 链。 | ✅ #9 |
-| 10 | `lib.rs:71/93` | 3 个 spawn 循环(消息接收、断线 watcher)panic 后静默死亡,本场后续不再有断线提醒/弹窗。 | 循环体包错误恢复(记日志后继续);watcher 锁点用 #1 的 `lock()` 自恢复。 | ✅ #10 |
+| 10 | `lib.rs:71/93` | 3 个 spawn 循环 panic 后静默死亡。**验证后降级:** 三个循环均无现实 panic 路径(消息循环全 `let _` 吞错;web spawn 无 loop;watcher 唯一可错点是锁)。 | **并入 #1** —— watcher 锁点(`lib.rs:99`)改用 #1 的 `lock()` 自恢复即可,不加 `catch_unwind`。 | ↳ 并入 #1 |
 | 11 | `config.rs:11` | `last_selected_window_title` 半接线:声明并序列化,从不读写。 | 本轮:删字段(YAGNI)。"记住上次窗口"若要做列入 §4。 | ✅ #11(删) |
 | 12 | `Cargo.toml:30` | `tower-http`(cors 特性)被引入但全仓 0 引用(`router()` 无 `CorsLayer`)。 | 删依赖(#6 用 axum 原生,不需要它),同步 Cargo.lock。 | ✅ #12 |
 | 13 | `presenter.js:103` | 锁按钮判据把"能 ARM"与"能 LOCK"混为一谈(`/api/lock` 只需 `is_controller`),锁屏后连"重新上锁"也按不动。 | `online && isController` 即允许 lock 动作。 | ✅ #13 |
