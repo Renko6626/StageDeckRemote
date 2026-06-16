@@ -275,11 +275,17 @@ pub fn regenerate_token(state: State<Arc<AppState>>) {
 /// 导播 GUI:设置服务端口并持久化(下次启动生效;不改运行中的端口)。
 #[tauri::command]
 pub fn set_server_port(app: tauri::AppHandle, state: State<Arc<AppState>>, port: u16) {
-    if let Ok(dir) = app.path().app_config_dir() {
+    let saved = if let Ok(dir) = app.path().app_config_dir() {
         let path = dir.join("config.json");
         let mut cfg = crate::config::Config::load(&path);
         cfg.server_port = port;
-        let _ = cfg.save(&path);
+        cfg.save(&path).is_ok()
+    } else {
+        false
+    };
+    if saved {
+        log::event(&state, format!("服务端口已保存为 {port}(重启生效)"));
+    } else {
+        log::event(&state, format!("服务端口保存失败(端口 {port})"));
     }
-    log::event(&state, format!("服务端口已保存为 {port}(重启生效)"));
 }
