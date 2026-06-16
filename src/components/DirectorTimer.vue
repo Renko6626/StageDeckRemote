@@ -48,7 +48,8 @@ const over = computed(() => active.value && liveRemaining.value < 0);
 const display = computed(() => (active.value ? fmt(liveRemaining.value) : "—:—"));
 
 function start(min: number) {
-  void app.timerStart(Math.max(1, min) * 60000);
+  const m = Number.isFinite(min) ? min : 1;
+  void app.timerStart(Math.min(180, Math.max(1, m)) * 60000);
 }
 function toggle() {
   void app.timerToggle();

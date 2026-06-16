@@ -220,18 +220,25 @@ pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {
 /// 导播 GUI:暂停 / 继续。
 #[tauri::command]
 pub fn timer_toggle(state: State<Arc<AppState>>) {
-    if let Ok(mut i) = state.inner.lock() {
-        if let Some(t) = i.timer.as_mut() {
-            let now = crate::app_state::now_ms();
-            if t.running {
-                t.elapsed_before_ms += now.saturating_sub(t.started_at_ms);
-                t.running = false;
-            } else {
-                t.started_at_ms = now;
-                t.running = true;
-            }
+    let msg = {
+        let Ok(mut i) = state.inner.lock() else {
+            return;
+        };
+        let Some(t) = i.timer.as_mut() else {
+            return;
+        };
+        let now = crate::app_state::now_ms();
+        if t.running {
+            t.elapsed_before_ms = t.elapsed_before_ms.saturating_add(now.saturating_sub(t.started_at_ms));
+            t.running = false;
+            "计时:暂停"
+        } else {
+            t.started_at_ms = now;
+            t.running = true;
+            "计时:继续"
         }
-    }
+    };
+    log::event(&state, msg);
 }
 
 /// 导播 GUI:重置(清空)计时。
