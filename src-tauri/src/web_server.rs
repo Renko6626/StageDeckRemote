@@ -7,11 +7,7 @@ use crate::{log, routes};
 
 /// 启动 Axum 服务并阻塞运行（由 lib.rs 在 Tauri 的 async 运行时中 spawn）。
 pub async fn run(state: Arc<AppState>) {
-    let port = state
-        .inner
-        .lock()
-        .map(|i| i.server_port)
-        .unwrap_or(8787);
+    let port = state.lock().server_port;
 
     let app = routes::router(state.clone());
     let addr = format!("0.0.0.0:{port}");

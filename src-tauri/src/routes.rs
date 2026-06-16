@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
-    extract::{Query, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -47,6 +47,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/action", post(action))
         .route("/api/messages", get(messages))
         .route("/api/message", post(message))
+        .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
 
@@ -59,22 +60,18 @@ struct TokenQuery {
 }
 
 fn token_ok(state: &AppState, token: &Option<String>) -> bool {
-    let expected = state
-        .inner
-        .lock()
-        .map(|i| i.token.clone())
-        .unwrap_or_default();
+    let expected = {
+        let i = state.lock();
+        i.token.clone()
+    };
     matches!(token, Some(t) if auth::verify(t, &expected))
 }
 
 /// 请求体 client_id 是否为当前控制端(单控制端门控)。
 fn is_controller(state: &AppState, cid: &Option<String>) -> bool {
     let c = cid.as_deref();
-    state
-        .inner
-        .lock()
-        .map(|i| c.is_some() && i.active_client_id.as_deref() == c)
-        .unwrap_or(false)
+    let i = state.lock();
+    c.is_some() && i.active_client_id.as_deref() == c
 }
 
 fn json_err(code: StatusCode, reason: &str) -> Response {
@@ -128,7 +125,7 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     let body = {
-        let mut i = state.inner.lock().expect("state lock poisoned");
+        let mut i = state.lock();
         let is_controller = match &q.cid {
             Some(cid) => crate::app_state::note_presence_and_claim(&mut i, cid, crate::app_state::now_ms()),
             None => false,
@@ -139,7 +136,6 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
             "remote_enabled": i.remote_enabled,
             "control_locked": i.control_locked,
             "presenter_unlocked": i.presenter_unlocked,
-            "active_client_id": i.active_client_id,
             "is_controller": is_controller,
             "director_message": i.director_message.clone(),
             "timer": i.timer.as_ref().map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
@@ -153,8 +149,14 @@ async fn snapshot(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
     if !token_ok(&state, &q.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    match capture::snapshot_jpeg(&state, 1280, 720, 70) {
-        Ok(bytes) => (
+    // 截图/JPEG 编码是阻塞型 GDI 调用,放到 blocking 线程池。
+    let state2 = state.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        capture::snapshot_jpeg(&state2, 1280, 720, 70)
+    })
+    .await;
+    match result {
+        Ok(Ok(bytes)) => (
             [
                 (header::CONTENT_TYPE, "image/jpeg"),
                 (header::CACHE_CONTROL, "no-store"),
@@ -162,7 +164,9 @@ async fn snapshot(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
             bytes,
         )
             .into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("capture error: {e}"))
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("capture error: {e}"))
+            .into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "capture error: panicked".to_string())
             .into_response(),
     }
 }
@@ -195,7 +199,7 @@ async fn click(State(state): State<Arc<AppState>>, Json(req): Json<ClickReq>) ->
     }
     // 取目标窗口 handle，再实时读取矩形（窗口可能已移动）。
     let handle = {
-        let i = state.inner.lock().expect("state lock poisoned");
+        let i = state.lock();
         i.selected_window.as_ref().map(|w| w.handle)
     };
     let Some(handle) = handle else {
@@ -236,14 +240,14 @@ struct ActionReq {
 }
 
 async fn next(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
-    page_turn(&state, &req.token, &req.client_id, true)
+    page_turn(&state, &req.token, &req.client_id, true).await
 }
 
 async fn prev(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
-    page_turn(&state, &req.token, &req.client_id, false)
+    page_turn(&state, &req.token, &req.client_id, false).await
 }
 
-fn page_turn(
+async fn page_turn(
     state: &AppState,
     token: &Option<String>,
     client_id: &Option<String>,
@@ -259,27 +263,38 @@ fn page_turn(
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    // COM 翻页优先；失败回退 SendInput（先置前窗口）。
-    let com_result = if forward { crate::ppt_com::nav_next() } else { crate::ppt_com::nav_prev() };
-    let result = match com_result {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            if let Some(handle) = {
-                let i = state.inner.lock().expect("state lock poisoned");
-                i.selected_window.as_ref().map(|w| w.handle)
-            } {
-                crate::window_manager::bring_to_front(handle);
-            }
-            if forward { input::key_next() } else { input::key_prev() }
-        }
+    // SendInput 回退需要的目标窗口 handle（COM 失败时置前窗口）。
+    let handle = {
+        let i = state.lock();
+        i.selected_window.as_ref().map(|w| w.handle)
     };
+    // COM 翻页 + SendInput 回退都是阻塞型调用,整体放到 blocking 线程池。
+    let result = tokio::task::spawn_blocking(move || {
+        // COM 翻页优先；失败回退 SendInput（先置前窗口）。
+        let com_result = if forward { crate::ppt_com::nav_next() } else { crate::ppt_com::nav_prev() };
+        match com_result {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                if let Some(handle) = handle {
+                    crate::window_manager::bring_to_front(handle);
+                }
+                let r = if forward { input::key_next() } else { input::key_prev() };
+                r.map_err(|e| e.to_string())
+            }
+        }
+    })
+    .await;
     match result {
-        Ok(()) => {
+        Ok(Ok(())) => {
             log::event(state, if forward { "下一页" } else { "上一页" });
             ok_json()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::event(state, format!("翻页失败：{e}"));
+            json_err(StatusCode::INTERNAL_SERVER_ERROR, "input_failed")
+        }
+        Err(_) => {
+            log::event(state, "翻页失败：panicked");
             json_err(StatusCode::INTERNAL_SERVER_ERROR, "input_failed")
         }
     }
@@ -294,7 +309,8 @@ async fn lock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) ->
     if !is_controller(&state, &req.client_id) {
         return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.presenter_unlocked = false;
     }
     log::event(&state, "主持人端：锁定");
@@ -312,7 +328,8 @@ async fn unlock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) 
     if !state.button_allowed() {
         return json_err(StatusCode::FORBIDDEN, "remote_disabled");
     }
-    if let Ok(mut i) = state.inner.lock() {
+    {
+        let mut i = state.lock();
         i.presenter_unlocked = true;
     }
     log::event(&state, "主持人端：释放控制");
@@ -331,9 +348,9 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match crate::ppt_com::set_black(true) {
-        Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::SERVICE_UNAVAILABLE, "black_failed"),
+    match tokio::task::spawn_blocking(move || crate::ppt_com::set_black(true)).await {
+        Ok(Ok(())) => ok_json(),
+        _ => json_err(StatusCode::SERVICE_UNAVAILABLE, "black_failed"),
     }
 }
 
@@ -347,9 +364,9 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match crate::ppt_com::set_black(false) {
-        Ok(()) => ok_json(),
-        Err(_) => json_err(StatusCode::SERVICE_UNAVAILABLE, "restore_failed"),
+    match tokio::task::spawn_blocking(move || crate::ppt_com::set_black(false)).await {
+        Ok(Ok(())) => ok_json(),
+        _ => json_err(StatusCode::SERVICE_UNAVAILABLE, "restore_failed"),
     }
 }
 
@@ -357,7 +374,10 @@ async fn slide_state(State(state): State<Arc<AppState>>, Query(q): Query<TokenQu
     if !token_ok(&state, &q.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    let st = crate::ppt_com::slide_state().unwrap_or_else(|_| crate::ppt_com::SlideState::unavailable());
+    let st = match tokio::task::spawn_blocking(|| crate::ppt_com::slide_state()).await {
+        Ok(Ok(s)) => s,
+        _ => crate::ppt_com::SlideState::unavailable(),
+    };
     Json(st).into_response()
 }
 
@@ -379,15 +399,19 @@ async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBod
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match crate::ppt_com::trigger_action(&req.shape) {
-        Ok(macro_name) => {
+    // 阻塞型 STA-COM 调用放到 blocking 线程池,避免占用 tokio worker。
+    let shape = req.shape.clone();
+    let result = tokio::task::spawn_blocking(move || crate::ppt_com::trigger_action(&shape)).await;
+    match result {
+        Ok(Ok(macro_name)) => {
             log::event(&state, format!("触发 {} → {}", req.shape, macro_name));
             ok_json()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::event(&state, format!("触发失败（{}）:{e}", req.shape));
             json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed")
         }
+        Err(_) => json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_panicked"),
     }
 }
 
@@ -397,11 +421,10 @@ async fn messages(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
     if !token_ok(&state, &q.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    let presets = state
-        .inner
-        .lock()
-        .map(|i| i.presets.clone())
-        .unwrap_or_default();
+    let presets = {
+        let i = state.lock();
+        i.presets.clone()
+    };
     Json(presets).into_response()
 }
 
@@ -418,9 +441,11 @@ async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     // 只允许发送预制列表里的消息:校验 id,取服务端当前文本。
-    let text = state.inner.lock().ok().and_then(|i| {
+    // 取完文本即释放 guard,避免后续 send/log 在持锁下执行(死锁纪律)。
+    let text = {
+        let i = state.lock();
         i.presets.iter().find(|p| p.id == req.id).map(|p| p.text.clone())
-    });
+    };
     let Some(text) = text else {
         return json_err(StatusCode::BAD_REQUEST, "unknown_message");
     };

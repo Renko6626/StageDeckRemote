@@ -15,5 +15,8 @@ pub fn generate_token() -> String {
 
 /// 校验请求 token 是否与当前 token 一致。空 token 一律拒绝。
 pub fn verify(provided: &str, expected: &str) -> bool {
-    !expected.is_empty() && provided == expected
+    if expected.is_empty() {
+        return false;
+    }
+    constant_time_eq::constant_time_eq(provided.as_bytes(), expected.as_bytes())
 }

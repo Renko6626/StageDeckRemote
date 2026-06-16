@@ -12,6 +12,7 @@
   }
   var SNAPSHOT_MIN = 300; // ms between snapshot frames
   var POLL = 900; // ms status + slide_state cadence
+  var SLOW_POLL = 4000; // ms back-off cadence after a 401 (token changed)
 
   var el = {
     connDot: document.getElementById("conn-dot"),
@@ -55,6 +56,8 @@
     mode: "main",
     com: { available: false, in_show: false, current: 0, total: 0, actions: [] },
     statusTimer: null,
+    pollRate: POLL,
+    tokenBanner: false, // dir-banner currently shows the persistent "token changed" notice
   };
   var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
@@ -100,7 +103,10 @@
     var armed = state.unlocked;
     el.lockBtn.textContent = armed ? "● 已解锁 · 点此锁定" : "○ 已锁定 · 点此释放控制";
     el.lockBtn.classList.toggle("locked", !armed);
-    el.lockBtn.disabled = !state.online || !state.isController || (!state.allowed && !state.unlocked);
+    // Action-aware: ARM (→/api/unlock) needs button_allowed; LOCK (→/api/lock) needs only controllership.
+    var canArm = state.online && state.isController && state.allowed; // → /api/unlock
+    var canLock = state.online && state.isController; // → /api/lock
+    el.lockBtn.disabled = state.unlocked ? !canLock : !canArm;
 
     // SYNC 锁定遮罩
     el.overlay.classList.toggle("hidden", armed);
@@ -162,6 +168,11 @@
         state.online = true;
         state.connecting = false;
         state.tokenInvalid = false;
+        setPollRate(POLL); // recovered: restore fast cadence
+        if (state.tokenBanner) {
+          state.tokenBanner = false;
+          hideDirBanner(); // clear the persistent "token changed" notice
+        }
         state.latency = Date.now() - t0;
         state.allowed = s.remote_enabled && !s.control_locked;
         state.unlocked = state.allowed && s.presenter_unlocked;
@@ -177,8 +188,10 @@
   }
   function handle401(r) {
     if (r.status === 401) {
-      stopPolling();
       setDown(true);
+      setPollRate(SLOW_POLL); // back off, keep polling so a re-issued token self-heals
+      state.tokenBanner = true;
+      showDirBanner("访问码已更改,请重新扫码二维码", { persist: true });
       return null;
     }
     return r;
@@ -194,13 +207,20 @@
     render();
   }
   function startPolling() {
-    if (!state.statusTimer) state.statusTimer = setInterval(poll, POLL);
+    if (!state.statusTimer) state.statusTimer = setInterval(poll, state.pollRate);
   }
   function stopPolling() {
     if (state.statusTimer) {
       clearInterval(state.statusTimer);
       state.statusTimer = null;
     }
+  }
+  // Swap the single poll interval without stacking timers.
+  function setPollRate(ms) {
+    if (state.pollRate === ms) return;
+    state.pollRate = ms;
+    stopPolling();
+    state.statusTimer = setInterval(poll, ms);
   }
 
   // ── snapshot chain (SYNC) ──
@@ -230,12 +250,25 @@
     });
   });
 
+  // ── action response handler: surface 403 (locked / lost control), always refresh gating ──
+  function onActionResp(r) {
+    if (r && r.status === 403) {
+      flashNotice("已被锁定 / 已失去控制权");
+    }
+    poll(); // refresh gating immediately in all cases
+  }
+  // Brief mode-independent toast (dir-banner is a sibling of all pages → visible in MAIN/SYNC/MSG).
+  function flashNotice(text) {
+    state.tokenBanner = false; // 瞬时提示不是持久的"访问码已变"横幅
+    showDirBanner(text, { persist: false });
+  }
+
   // ── macro action buttons (delegated) ──
   el.actions.addEventListener("click", function (ev) {
     var b = ev.target.closest(".act");
     if (!b || b.disabled) return;
     var shape = b.getAttribute("data-id");
-    api("/api/action", { shape: shape }).then(poll).catch(function () {});
+    api("/api/action", { shape: shape }).then(onActionResp).catch(function () {});
   });
 
   // ── transport dock (delegated on body) ──
@@ -244,7 +277,7 @@
     var b = ev.target.closest(".d-btn, .d-next");
     if (!b || b.disabled) return;
     var a = b.getAttribute("data-action");
-    if (ACT[a]) api(ACT[a], {}).then(poll).catch(function () {});
+    if (ACT[a]) api(ACT[a], {}).then(onActionResp).catch(function () {});
   });
 
   // ── arm / lock ──
@@ -261,7 +294,7 @@
     var x = (ev.clientX - r.left) / r.width;
     var y = (ev.clientY - r.top) / r.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
-    api("/api/click", { x: x, y: y }).catch(function () {});
+    api("/api/click", { x: x, y: y }).then(onActionResp).catch(function () {});
   });
 
   // ── quick messages (MSG) ──
@@ -311,15 +344,23 @@
     if (lastDirSeq === null) { lastDirSeq = seq; return; } // 首帧只记基线,不回放旧消息
     if (dm && dm.seq > lastDirSeq) {
       lastDirSeq = dm.seq;
-      el.dirBannerText.textContent = dm.text;
-      el.dirBannerTime.textContent = fmtHM(dm.at_ms);
-      el.dirBanner.hidden = false;
-      if (dirBannerTimer) clearTimeout(dirBannerTimer);
-      dirBannerTimer = setTimeout(hideDirBanner, 10000);
+      state.tokenBanner = false; // a fresh director message takes over the shared banner
+      showDirBanner(dm.text, { persist: false, time: fmtHM(dm.at_ms) });
     }
   }
+  // Shared banner surface for director messages, token-changed notice, and action toasts.
+  // persist:true keeps it up (no auto-hide) until explicitly cleared (token-changed case).
+  function showDirBanner(text, opts) {
+    opts = opts || {};
+    el.dirBannerText.textContent = text;
+    el.dirBannerTime.textContent = opts.time || "";
+    el.dirBanner.hidden = false;
+    if (dirBannerTimer) { clearTimeout(dirBannerTimer); dirBannerTimer = null; }
+    if (!opts.persist) dirBannerTimer = setTimeout(hideDirBanner, 10000);
+  }
   function hideDirBanner() {
-    if (dirBannerTimer) clearTimeout(dirBannerTimer);
+    if (dirBannerTimer) { clearTimeout(dirBannerTimer); dirBannerTimer = null; }
+    state.tokenBanner = false;
     el.dirBanner.hidden = true;
   }
   el.dirBannerX.addEventListener("click", hideDirBanner);
