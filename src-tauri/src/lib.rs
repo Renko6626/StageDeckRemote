@@ -10,6 +10,7 @@ mod capture;
 mod capture_session;
 mod commands;
 mod config;
+mod frame_broker;
 mod input;
 mod log;
 mod network;
