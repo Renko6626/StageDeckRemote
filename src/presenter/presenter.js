@@ -367,10 +367,18 @@
 
   // ── show timer (status bar, local tick) ──
   var timerBase = null; // {remaining, running, at}
+  var tickHandle = null; // setInterval id — runs ONLY while a timer is active
   function handleTimer(t) {
-    if (!t) { timerBase = null; el.timerStat.hidden = true; return; }
+    if (!t) {
+      timerBase = null;
+      el.timerStat.hidden = true;
+      if (tickHandle) { clearInterval(tickHandle); tickHandle = null; } // no timer → stop ticking
+      return;
+    }
     timerBase = { remaining: t.remaining_ms, running: t.running, at: Date.now() };
     el.timerStat.hidden = false;
+    if (!tickHandle) tickHandle = setInterval(tickTimer, 250); // active → start (guard double-start)
+    tickTimer(); // paint immediately, don't wait up to 250ms
   }
   function fmtTimer(ms) {
     var neg = ms < 0;
@@ -385,7 +393,6 @@
     el.timerVal.textContent = fmtTimer(live);
     el.timerStat.classList.toggle("over", live < 0);
   }
-  setInterval(tickTimer, 250);
 
   // ── boot ──
   render();
