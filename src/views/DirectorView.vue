@@ -14,6 +14,7 @@ import DirectorMessages from "../components/DirectorMessages.vue";
 
 const app = useAppState();
 let timer: number | undefined;
+let inFlight = false;
 
 // ── 可拖拽分栏 ──
 const RAIL_MIN = 300;
@@ -88,7 +89,13 @@ onMounted(async () => {
       /* 自动识别失败不阻塞启动 */
     }
   }
-  timer = window.setInterval(() => void app.refresh(), 1500);
+  timer = window.setInterval(() => {
+    if (inFlight) return; // skip tick if a prior refresh is still running (no overlap → no stale overwrite)
+    inFlight = true;
+    void app.refresh().finally(() => {
+      inFlight = false;
+    });
+  }, 1500);
 });
 
 onUnmounted(() => {
