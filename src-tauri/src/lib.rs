@@ -13,7 +13,6 @@ mod config;
 mod input;
 mod log;
 mod network;
-mod obs;
 mod ppt_com;
 mod presets;
 mod routes;
@@ -97,8 +96,6 @@ pub fn run() {
             commands::force_lock,
             commands::local_next,
             commands::local_prev,
-            commands::local_black,
-            commands::local_restore,
             commands::get_logs,
             commands::vba_list_macros,
             commands::vba_run_macro,

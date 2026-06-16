@@ -11,7 +11,7 @@ use base64::Engine;
 
 use crate::app_state::{AppState, TargetWindow};
 use crate::log::LogEntry;
-use crate::{input, log, network, obs, window_manager};
+use crate::{input, log, network, window_manager};
 
 /// 导播端状态快照（喂给前端展示）。
 #[derive(Serialize)]
@@ -119,16 +119,6 @@ fn activate_selected(state: &AppState) {
             window_manager::bring_to_front(w.handle);
         }
     }
-}
-
-#[tauri::command]
-pub fn local_black() -> Result<(), String> {
-    obs::black().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn local_restore() -> Result<(), String> {
-    obs::restore().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
