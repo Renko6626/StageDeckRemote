@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 快捷消息预制编辑(导播)+ 提示音开关。
+// 快捷消息预制编辑(导播)+ 点一条发给主持人 + 提示音开关。
 import { ref, onMounted } from "vue";
 
 import { api, type PresetMessage } from "../utils/api";
@@ -9,6 +9,8 @@ const editing = ref(false);
 const drafts = ref<string[]>([]);
 const chimeOn = ref(localStorage.getItem("sd.dir.toastChime") !== "off");
 const error = ref<string | null>(null);
+const sentFlash = ref("");
+let flashTimer: number | undefined;
 
 async function load() {
   try {
@@ -17,6 +19,17 @@ async function load() {
   } catch (e) {
     error.value = String(e);
   }
+}
+async function sendToPresenter(p: PresetMessage) {
+  try {
+    await api.sendToPresenter(p.id);
+    sentFlash.value = "已发送给主持人 ✓";
+  } catch (e) {
+    sentFlash.value = "发送失败";
+    error.value = String(e);
+  }
+  if (flashTimer) window.clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => (sentFlash.value = ""), 1600);
 }
 function startEdit() {
   drafts.value = presets.value.map((p) => p.text);
@@ -53,10 +66,14 @@ onMounted(load);
     <h2>快捷消息</h2>
 
     <template v-if="!editing">
+      <div class="hint">点一条发给主持人</div>
       <ul class="list">
-        <li v-for="p in presets" :key="p.id">{{ p.text }}</li>
+        <li v-for="p in presets" :key="p.id">
+          <button class="send" @click="sendToPresenter(p)">{{ p.text }}</button>
+        </li>
         <li v-if="!presets.length" class="empty">无预制消息</li>
       </ul>
+      <p v-if="sentFlash" class="sent">{{ sentFlash }}</p>
       <div class="row">
         <button @click="startEdit">编辑</button>
         <button class="chime" :class="{ on: chimeOn }" @click="toggleChime">
@@ -84,25 +101,43 @@ onMounted(load);
 </template>
 
 <style scoped>
+.hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 8px;
+}
 .list {
   list-style: none;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   padding: 0;
   display: grid;
-  gap: 4px;
-}
-.list li {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--ink-dim);
-  padding: 4px 0;
-  border-bottom: 1px solid var(--line);
+  gap: 5px;
 }
 .list li.empty {
+  font-family: var(--mono);
+  font-size: 11px;
   color: var(--ink-faint);
   text-transform: uppercase;
   letter-spacing: 0.12em;
+  padding: 4px 0;
+}
+.send {
+  width: 100%;
+  text-align: left;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 11px;
+}
+.sent {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
 }
 .row {
   display: flex;

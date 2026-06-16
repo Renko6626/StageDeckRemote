@@ -443,3 +443,50 @@ body::before {
   padding: 8px 16px;
   z-index: 5;
 }
+
+/* ─── director → presenter banner ─── */
+.dir-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 16px);
+  max-width: 960px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--ink);
+  color: #000;
+  border: 1px solid var(--ink);
+  padding: 10px 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.dir-banner[hidden] {
+  display: none;
+}
+.db-head {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.db-text {
+  flex: 1 1 auto;
+  font-family: var(--sans);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.db-x {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: #000;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 2px 6px;
+}

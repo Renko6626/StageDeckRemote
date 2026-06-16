@@ -62,4 +62,5 @@ export const api = {
   getSlideState: () => invoke<SlideState>("get_slide_state"),
   getPresets: () => invoke<PresetMessage[]>("get_presets"),
   setPresets: (texts: string[]) => invoke<void>("set_presets", { texts }),
+  sendToPresenter: (id: string) => invoke<void>("send_to_presenter", { id }),
 };

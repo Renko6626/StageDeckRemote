@@ -125,6 +125,7 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
             "control_locked": i.control_locked,
             "presenter_unlocked": i.presenter_unlocked,
             "active_client_id": i.active_client_id,
+            "director_message": i.director_message.clone(),
             "server_time": now_secs(),
         })
     };
