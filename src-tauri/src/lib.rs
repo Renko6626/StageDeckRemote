@@ -43,6 +43,7 @@ pub fn run() {
     let state = Arc::new(AppState::new(token, DEFAULT_PORT, message_tx));
     let server_state = state.clone();
     let preset_state = state.clone();
+    let watch_state = state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -85,6 +86,35 @@ pub fn run() {
                 }
             });
 
+            // 控制端断线 watcher:在线→离线跳变 → 释放控制槽 + 日志 + 置顶 toast。
+            let ws = watch_state.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut was_online = false;
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
+                loop {
+                    interval.tick().await;
+                    let now = app_state::now_ms();
+                    let online = if let Ok(mut i) = ws.inner.lock() {
+                        let on = app_state::controller_online(&i, now);
+                        if was_online && !on {
+                            i.active_client_id = None;
+                        }
+                        on
+                    } else {
+                        was_online
+                    };
+                    if was_online && !online {
+                        crate::log::event(&ws, "主持人已断开连接");
+                        let _ = ws.message_tx.send(app_state::HostMessage {
+                            from: "系统".to_string(),
+                            text: "主持人已断开连接".to_string(),
+                            at_ms: now,
+                        });
+                    }
+                    was_online = online;
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -107,6 +137,7 @@ pub fn run() {
             commands::timer_start,
             commands::timer_toggle,
             commands::timer_reset,
+            commands::release_controller,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

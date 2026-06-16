@@ -55,6 +55,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 #[derive(Deserialize)]
 struct TokenQuery {
     token: Option<String>,
+    cid: Option<String>,
 }
 
 fn token_ok(state: &AppState, token: &Option<String>) -> bool {
@@ -64,6 +65,16 @@ fn token_ok(state: &AppState, token: &Option<String>) -> bool {
         .map(|i| i.token.clone())
         .unwrap_or_default();
     matches!(token, Some(t) if auth::verify(t, &expected))
+}
+
+/// 请求体 client_id 是否为当前控制端(单控制端门控)。
+fn is_controller(state: &AppState, cid: &Option<String>) -> bool {
+    let c = cid.as_deref();
+    state
+        .inner
+        .lock()
+        .map(|i| c.is_some() && i.active_client_id.as_deref() == c)
+        .unwrap_or(false)
 }
 
 fn json_err(code: StatusCode, reason: &str) -> Response {
@@ -117,7 +128,11 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     let body = {
-        let i = state.inner.lock().expect("state lock poisoned");
+        let mut i = state.inner.lock().expect("state lock poisoned");
+        let is_controller = match &q.cid {
+            Some(cid) => crate::app_state::note_presence_and_claim(&mut i, cid, crate::app_state::now_ms()),
+            None => false,
+        };
         json!({
             "ok": true,
             "ppt_window_found": i.selected_window.is_some(),
@@ -125,6 +140,7 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
             "control_locked": i.control_locked,
             "presenter_unlocked": i.presenter_unlocked,
             "active_client_id": i.active_client_id,
+            "is_controller": is_controller,
             "director_message": i.director_message.clone(),
             "timer": i.timer.as_ref().map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
             "server_time": now_secs(),
@@ -165,6 +181,9 @@ struct ClickReq {
 async fn click(State(state): State<Arc<AppState>>, Json(req): Json<ClickReq>) -> Response {
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     // 坐标必须是 [0,1] 归一化值（spec §13.3）。
     if !(0.0..=1.0).contains(&req.x) || !(0.0..=1.0).contains(&req.y) {
@@ -217,16 +236,24 @@ struct ActionReq {
 }
 
 async fn next(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
-    page_turn(&state, &req.token, true)
+    page_turn(&state, &req.token, &req.client_id, true)
 }
 
 async fn prev(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
-    page_turn(&state, &req.token, false)
+    page_turn(&state, &req.token, &req.client_id, false)
 }
 
-fn page_turn(state: &AppState, token: &Option<String>, forward: bool) -> Response {
+fn page_turn(
+    state: &AppState,
+    token: &Option<String>,
+    client_id: &Option<String>,
+    forward: bool,
+) -> Response {
     if !token_ok(state, token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !is_controller(state, client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     // 翻页与宏/点坐标同级:需三层全通(含主持人 ARM)。
     if !state.click_allowed() {
@@ -264,6 +291,9 @@ async fn lock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) ->
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
+    }
     if let Ok(mut i) = state.inner.lock() {
         i.presenter_unlocked = false;
     }
@@ -274,6 +304,9 @@ async fn lock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) ->
 async fn unlock(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     // 只有导播放行（远程开启且未强制锁）时才允许主持人解锁。
     if !state.button_allowed() {
@@ -292,6 +325,9 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
+    }
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
@@ -304,6 +340,9 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
 async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -> Response {
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
@@ -333,6 +372,9 @@ struct ActionReqBody {
 async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBody>) -> Response {
     if !token_ok(&state, &req.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    if !is_controller(&state, &req.client_id) {
+        return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
@@ -383,7 +425,7 @@ async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>
         return json_err(StatusCode::BAD_REQUEST, "unknown_message");
     };
     let msg = crate::app_state::HostMessage {
-        from: "presenter".to_string(),
+        from: "主持人".to_string(),
         text: text.clone(),
         at_ms: now_ms(),
     };
