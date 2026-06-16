@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::log::LogEntry;
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 /// 当前被控制的目标窗口（PPT 放映窗口）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,7 +129,8 @@ pub struct AppState {
     pub inner: Mutex<Inner>,
     pub capture: crate::capture::CaptureManager,
     /// 收到主持人消息时投递给 Tauri 接收任务(显示软弹窗)。
-    pub message_tx: UnboundedSender<HostMessage>,
+    /// 有界通道:洪泛(token-gated /api/message)下满则丢弃,绝不阻塞。
+    pub message_tx: Sender<HostMessage>,
 }
 
 impl AppState {
@@ -139,7 +140,7 @@ impl AppState {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub fn new(token: String, server_port: u16, message_tx: UnboundedSender<HostMessage>) -> Self {
+    pub fn new(token: String, server_port: u16, message_tx: Sender<HostMessage>) -> Self {
         AppState {
             inner: Mutex::new(Inner {
                 selected_window: None,
@@ -208,7 +209,7 @@ mod tests {
 
     #[test]
     fn default_is_not_force_locked() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let st = AppState::new("t".into(), 0, tx);
         let i = st.lock();
         assert!(!i.remote_enabled, "远程默认关");
@@ -218,7 +219,7 @@ mod tests {
 
     #[test]
     fn gating_state_machine() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let st = AppState::new("t".into(), 0, tx);
         // 远程关 → 全禁
         assert!(!st.button_allowed());
@@ -245,7 +246,7 @@ mod tests {
 
     #[test]
     fn claim_first_come_takeover_viewonly() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let st = AppState::new("t".into(), 0, tx);
         let mut i = st.lock();
         // 空槽 → A 认领
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn lock_recovers_from_poison() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let app = std::sync::Arc::new(AppState::new("tok".into(), 8787, tx));
         let a2 = app.clone();
         // 在持有 guard 时 panic → 毒化 mutex；join 吞掉子线程的 panic。

@@ -18,8 +18,10 @@
 - **主持人端**：纯浏览器页面，由内嵌的 **Axum** 服务（`0.0.0.0:8787`）提供。
   只暴露主持人需要的受限接口（看画面、点击、翻页、锁定），全部需要 token。
 - **安全边界**：局域网上只能看到"主持人能做的"那部分 API；导播特权走 IPC，天然隔离。
-  三层锁：`remote_enabled`（导播总开关）→ `control_locked`（导播强制锁）→
-  `presenter_unlocked`（主持人本地解锁），三者全放行才允许点击预览图。
+  三层锁：`remote_enabled`（导播总开关，默认关）→ `control_locked`（导播紧急锁，默认释放）→
+  `presenter_unlocked`（主持人 ARM）。`click_allowed = remote_enabled && !control_locked && presenter_unlocked`
+  门控**所有**主持人动作（翻页/黑屏/恢复/宏/点击）；`button_allowed = remote_enabled && !control_locked`
+  只作为主持人 ARM（`/api/unlock`）的前置条件。
 
 ## 技术栈
 
@@ -29,7 +31,7 @@
 | 导播 GUI | Vue 3 + TypeScript + Vite + Pinia + Vue Router |
 | 后端核心 | Rust |
 | 本地服务 | Axum + Tokio |
-| 原生能力 | windows-rs（截图/输入/窗口枚举，仅 Windows） |
+| 原生能力 | windows-rs（截图/输入/窗口枚举 + PowerPoint COM 控制，仅 Windows） |
 | 主持人端 | 浏览器（原生 HTML/CSS/JS，无需安装） |
 
 ## 目录结构
@@ -45,7 +47,7 @@ src-tauri/src/       Rust 核心（见 docs/project.md §11 模块职责）
   commands.rs        导播端 Tauri IPC 命令（特权）
   web_server.rs      Axum 服务启动
   routes.rs          主持人端 HTTP API（受限）
-  window_manager / capture / input   原生能力（#[cfg(windows)]）
+  window_manager / capture / capture_session / input / ppt_com   原生能力（#[cfg(windows)]）
 docs/                项目文档
 ```
 
@@ -64,14 +66,18 @@ pnpm typecheck      # 仅类型检查前端
 
 ### 平台说明
 
-- 原生能力（`capture` / `input` / `window_manager`）通过 `#[cfg(windows)]` 实现，
-  非 Windows 平台为占位实现（截图返回占位图、模拟输入返回"不支持"），
-  以便在 Linux/macOS 上开发与编译**服务层**。
+- 原生能力（`capture` / `capture_session` / `input` / `window_manager` / `ppt_com`）通过
+  `#[cfg(windows)]` 实现真实分支（WGC/GDI BitBlt 截图、SendInput 输入、EnumWindows 枚举、
+  PowerPoint COM 控制），非 Windows 平台为 `#[cfg(not(windows))]` 占位实现（截图返回占位图、
+  其余返回"仅 Windows"），以便在 Linux/macOS 上开发与编译**服务层**。
 - 在 Linux 上构建完整 Tauri 应用还需系统库 `webkit2gtk` / `librsvg`
   （见 <https://tauri.app/start/prerequisites/>）。生产构建建议在 Windows 上进行。
 
 ## 当前状态
 
-MVP 脚手架：结构、IPC/HTTP 通路、API 路由、三层锁、占位截图链路已就绪；
-Win32 真实截图/输入/窗口枚举为 `#[cfg(windows)]` 待填充项（代码中以 `TODO(windows)` 标注）。
-路线图见 [`docs/project.md`](docs/project.md) §14–§15。
+核心闭环已打通：结构、IPC/HTTP 通路、API 路由、三层锁、截图链路均就绪。Win32 原生能力
+均已实现为 `#[cfg(windows)]` 真实分支（非 Windows 为占位 stub）：WGC/GDI BitBlt 截图
+（`capture.rs` + `capture_session.rs`）、SendInput 输入（`input.rs`）、EnumWindows 窗口枚举
+（`window_manager.rs`）、PowerPoint COM 控制（`ppt_com.rs`，翻页/黑屏/宏/取放映态）；
+二维码已用离线 `qrcode` 库本地生成（`src/utils/qrcode.ts` + `QrCodePanel.vue`）。源码中已无
+`TODO(windows)` 占位标记。路线图见 [`docs/project.md`](docs/project.md) §14–§15。

@@ -47,7 +47,7 @@ mod imp {
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetClientRect, GetWindowLongW, GetWindowTextLengthW,
-        GetWindowTextW, IsWindow, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE, GWL_STYLE,
+        GetWindowTextW, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE, GWL_STYLE,
     };
 
     fn hwnd_to_isize(h: HWND) -> isize {
@@ -182,10 +182,6 @@ mod imp {
         to_target(isize_to_hwnd(handle))
     }
 
-    pub fn window_exists(handle: isize) -> bool {
-        unsafe { IsWindow(isize_to_hwnd(handle)).as_bool() }
-    }
-
     pub fn bring_to_front(handle: isize) {
         unsafe {
             let _ = SetForegroundWindow(isize_to_hwnd(handle));
@@ -209,14 +205,10 @@ mod imp {
         None
     }
 
-    pub fn window_exists(_handle: isize) -> bool {
-        false
-    }
-
     pub fn bring_to_front(_handle: isize) {}
 }
 
-pub use imp::{bring_to_front, find_powerpoint, list_windows, window_exists, window_rect};
+pub use imp::{bring_to_front, find_powerpoint, list_windows, window_rect};
 
 #[cfg(test)]
 mod tests {

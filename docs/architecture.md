@@ -4,7 +4,8 @@
 > [`project.md`](project.md)，本文不重复需求，只在必要处引用其章节（如 §11）。
 > 决策的"为什么"沉淀在 [`adr/`](adr/) 下的决策记录中。
 >
-> 状态：MVP 脚手架阶段。原生截图/输入/窗口枚举为 `TODO(windows)` 占位。
+> 状态：核心闭环已实现。原生截图/输入/窗口枚举 + PowerPoint COM 控制均为 `#[cfg(windows)]`
+> 真实分支（非 Windows 为占位 stub）；源码已无 `TODO(windows)` 标记。
 
 ---
 
@@ -32,7 +33,7 @@ StageDeck Remote 让主持人通过**手机/平板浏览器**看到导播电脑�
                                               │      ┌──────────────────┐    │
                                               │      │ PowerPoint 放映窗口 │    │
                                               │      └─────────┬────────┘    │
-                                              │         OBS 捕捉 ▼ HDMI       │
+                                              │            HDMI ▼             │
                                               │                ▼ 舞台屏幕      │
                                               └──────────────────────────────┘
 ```
@@ -65,8 +66,8 @@ StageDeck Remote 让主持人通过**手机/平板浏览器**看到导播电脑�
    │   └──────────┬──────────┘                  │               │
    │              └───────────┬──────────────────┘               │
    │                          ▼  共享 Arc<AppState>(Mutex)        │
-   │     window_manager · capture · input · obs · network ·      │
-   │                 auth · config · log                         │
+   │   window_manager · capture · capture_session · input ·      │
+   │   ppt_com · network · auth · config · presets · log         │
    └───────────────────────────────────────────────────────────┘
 ```
 
@@ -134,9 +135,14 @@ sequenceDiagram
 
 ### 4.3 翻页 / 锁定
 
-- `POST /api/next|/prev` → 要求 `button_allowed`（远程开 且 未强制锁）→ `input::key_next/prev`。
-- `POST /api/unlock` → 仅当 `button_allowed` 时置 `presenter_unlocked=true`；`/api/lock` 置回 false。
-- 翻页**不要求**主持人解锁（显式按钮意图明确）；点击预览图**要求**解锁（防误触）。
+- `POST /api/next|/prev` → 要求 `click_allowed`（三层全通，含主持人 ARM）→ `ppt_com::nav_next/prev`，
+  COM 失败回退 `input::key_next/prev`。
+- `POST /api/black|/restore` → 同样要求 `click_allowed` → `ppt_com::set_black(true/false)`。
+- `POST /api/action` → 要求 `click_allowed` → `ppt_com::trigger_action(shape)`（运行宏）。
+- `POST /api/unlock` → 仅当 `button_allowed`（远程开且未紧急锁）时置 `presenter_unlocked=true`，
+  即主持人 ARM；`/api/lock` 置回 false。
+- **所有**主持人动作（翻页/黑屏/恢复/宏/点击预览图）都要求 `click_allowed`；
+  `button_allowed` 仅作为主持人能 ARM 的前置门控。
 
 ### 4.4 导播端（IPC）
 
@@ -154,7 +160,7 @@ Tauri（`.manage()`）与 Axum（`.with_state()`）两条通道共享。`Inner` 
 | --- | --- | --- |
 | `selected_window` | `None` | 目标 PPT 窗口（标题/矩形/句柄） |
 | `remote_enabled` | `false` | 导播总开关（锁层 1） |
-| `control_locked` | `true` | 导播强制锁（锁层 2） |
+| `control_locked` | `false` | 导播紧急锁（锁层 2，仅紧急用） |
 | `presenter_unlocked` | `false` | 主持人本地解锁（锁层 3） |
 | `active_client_id` | `None` | 当前控制端（单控制者，P1 强化） |
 | `token` | 启动随机生成 | 访问鉴权 |
@@ -163,11 +169,13 @@ Tauri（`.manage()`）与 Axum（`.with_state()`）两条通道共享。`Inner` 
 
 **三层锁**（[`project.md`](project.md) §13.2）：
 
-- 点击预览图（隐式操作）：`click_allowed = remote_enabled && !control_locked && presenter_unlocked`
-- 显式按钮（翻页等）：`button_allowed = remote_enabled && !control_locked`
+- **所有主持人动作**（翻页/黑屏/恢复/宏/点击预览图）：
+  `click_allowed = remote_enabled && !control_locked && presenter_unlocked`
+- **主持人 ARM 的前置门控**（`/api/unlock`）：`button_allowed = remote_enabled && !control_locked`
 
-默认最安全：远程关、强制锁、未解锁。导播显式开启后才可控。关闭远程或强制锁会同时
-清掉 `presenter_unlocked`，确保彻底接管。
+默认：远程关、紧急锁释放（仅紧急用）、未 ARM。导播开「远程控制」一步即放行 `button_allowed`，
+主持人再 ARM（`/api/unlock`）即得全功能。关闭远程或触发紧急锁会同时清掉 `presenter_unlocked`，
+确保彻底接管。
 
 > 并发：`Inner` 用 `std::sync::Mutex`，临界区短、不跨 `.await` 持锁。
 
@@ -201,12 +209,14 @@ screen_y = top  + round(y * height)
 | `web_server.rs` | 启动 Axum，绑定 `0.0.0.0:8787` | HTTP |
 | `routes.rs` | 主持人**受限 HTTP API**（§9 全端点） | HTTP |
 | `auth.rs` | token 生成 / 校验 | 共享 |
-| `window_manager.rs` | 枚举/识别/矩形/置前 | `#[cfg(windows)]` |
-| `capture.rs` | 窗口截图 → JPEG（当前占位图） | `#[cfg(windows)]` |
-| `input.rs` | 模拟鼠标/键盘 | `#[cfg(windows)]` |
-| `obs.rs` | OBS WebSocket 黑屏/恢复（P2 占位） | — |
+| `window_manager.rs` | EnumWindows 枚举/识别/矩形/置前 | `#[cfg(windows)]` |
+| `capture.rs` | 窗口截图 → JPEG（WGC 最新帧 / GDI BitBlt 回退 / 未选窗占位图） | `#[cfg(windows)]` |
+| `capture_session.rs` | WGC 后台捕获会话（写最新帧缓冲） | `#[cfg(windows)]` |
+| `input.rs` | SendInput 模拟鼠标/键盘 | `#[cfg(windows)]` |
+| `ppt_com.rs` | PowerPoint COM 控制：翻页 / 黑屏-恢复 / 取放映态 / 运行宏 | `#[cfg(windows)]` |
 | `network.rs` | 局域网 IP 发现、访问 URL | 共享 |
-| `config.rs` | 配置持久化 | 共享 |
+| `config.rs` | 配置持久化（端口等） | 共享 |
+| `presets.rs` | 预制快捷消息默认种子 + 持久化 | 共享 |
 | `log.rs` | 事件日志（内存环形 + stdout） | 共享 |
 
 前端 `src/`：`views/DirectorView.vue` 主面板组合 `components/*`，经 `stores/`(Pinia) 持有状态，
@@ -235,26 +245,26 @@ screen_y = top  + round(y * height)
 | 三层锁 | `remote_enabled` / `control_locked` / `presenter_unlocked` | §13.2 |
 | 坐标校验 | 后端强制 `0≤x,y≤1`，越界拒绝 | §13.3 |
 | 信任边界 | 导播特权走 IPC，不上网；网络只暴露主持人面 | §13（强化） |
-| 单控制端 | `active_client_id`（MVP 记录，P1 强制独占） | §13.4 |
+| 单控制端 | `active_client_id` + `cid` 心跳强制独占：所有动作端点经 `is_controller` 门控，控制端离线（>4s 无心跳）才可被接管 | §13.4 |
 | 审计日志 | 关键操作记时间/坐标/结果到 `log.rs` | §13.5 |
 | 断线保护 | 主持人端掉线即视为锁定、禁用按钮、遮罩提示 | §12.2 |
 
 ---
 
-## 10. 已知占位与待办
+## 10. 实现状态与待办
 
-| 项 | 现状 | 去向 |
-| --- | --- | --- |
-| `window_manager` 枚举/识别 | 空占位 | `TODO(windows)`：EnumWindows 等 |
-| `capture` 真实截图 | 返回占位图 | `TODO(windows)`：PrintWindow/BitBlt |
-| `input` 模拟点击/按键 | windows 下空实现 | `TODO(windows)`：SendInput |
-| OBS 黑屏/恢复 | 返回 not_implemented | P2：obws WebSocket |
-| 二维码 | 文本占位 | 接入离线 `qrcode` 库 |
-| 截图传输 | HTTP 轮询 | P1+：WebSocket/MJPEG |
-| 单控制端独占 | 仅记录 | P1：抢占/踢出逻辑 |
+| 项 | 现状 |
+| --- | --- |
+| `window_manager` 枚举/识别 | ✅ 已实现（EnumWindows + 类名/标题识别 + 矩形/置前） |
+| `capture` 真实截图 | ✅ 已实现（WGC 最新帧 / GDI BitBlt 回退；未选窗时占位图） |
+| `input` 模拟点击/按键 | ✅ 已实现（SendInput 绝对坐标点击 / 翻页按键） |
+| 黑屏/恢复 | ✅ 已实现（PowerPoint COM `set_black`；原 OBS 方案已废弃） |
+| 二维码 | ✅ 已实现（离线 `qrcode` 库本地渲染：`utils/qrcode.ts` + `QrCodePanel.vue`） |
+| 单控制端独占 | ✅ 已实现（`note_presence_and_claim`：先到为主、控制端离线可被接管） |
+| 截图传输 | HTTP 轮询；待办 P1+：WebSocket/MJPEG |
 
-打通最短闭环的实现顺序（[`project.md`](project.md) §19）：
-`window_manager` → `capture` → `input`，即可实现"手机点击 → PPT 真实点击"。
+PowerPoint 控制走**独立的 COM 通道**（`ppt_com.rs` 经 `GetActiveObject` 连到运行中的实例，
+与被截窗口无关），不依赖前述 `input` 的窗口注入即可翻页/黑屏/运行宏；`input` 仅作 COM 失败时的回退。
 
 ---
 

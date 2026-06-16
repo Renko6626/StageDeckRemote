@@ -6,10 +6,11 @@ import { api, type PresetMessage } from "../utils/api";
 
 const presets = ref<PresetMessage[]>([]);
 const editing = ref(false);
-const drafts = ref<string[]>([]);
+const drafts = ref<{ id: number; text: string }[]>([]);
 const error = ref<string | null>(null);
 const sentFlash = ref("");
 let flashTimer: number | undefined;
+let draftSeq = 0; // monotonic id source for stable :key
 
 async function load() {
   try {
@@ -31,18 +32,18 @@ async function sendToPresenter(p: PresetMessage) {
   flashTimer = window.setTimeout(() => (sentFlash.value = ""), 1600);
 }
 function startEdit() {
-  drafts.value = presets.value.map((p) => p.text);
+  drafts.value = presets.value.map((p) => ({ id: draftSeq++, text: p.text }));
   editing.value = true;
 }
 function addRow() {
-  drafts.value.push("");
+  drafts.value.push({ id: draftSeq++, text: "" });
 }
 function removeRow(i: number) {
   drafts.value.splice(i, 1);
 }
 async function save() {
   try {
-    await api.setPresets(drafts.value);
+    await api.setPresets(drafts.value.map((d) => d.text));
     editing.value = false;
     await load();
   } catch (e) {
@@ -76,8 +77,8 @@ onMounted(load);
 
     <template v-else>
       <div class="edit">
-        <div class="erow" v-for="(_, i) in drafts" :key="i">
-          <input v-model="drafts[i]" placeholder="消息文本" />
+        <div class="erow" v-for="(row, i) in drafts" :key="row.id">
+          <input v-model="row.text" placeholder="消息文本" />
           <button class="del" @click="removeRow(i)">✕</button>
         </div>
         <button class="add" @click="addRow">+ 添加</button>

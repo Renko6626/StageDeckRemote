@@ -5,8 +5,11 @@
 
 #[derive(Debug)]
 pub enum InputError {
+    /// 非 Windows 平台拒绝模拟输入；在 Windows 构建下不会被构造。
+    #[cfg_attr(windows, allow(dead_code))]
     Unsupported,
-    #[allow(dead_code)]
+    /// Windows 下 SendInput 失败；在非 Windows 构建下不会被构造。
+    #[cfg_attr(not(windows), allow(dead_code))]
     Failed(String),
 }
 

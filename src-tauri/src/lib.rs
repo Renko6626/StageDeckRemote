@@ -39,7 +39,7 @@ pub fn run() {
 
     let token = auth::generate_token();
     let (message_tx, mut message_rx) =
-        tokio::sync::mpsc::unbounded_channel::<app_state::HostMessage>();
+        tokio::sync::mpsc::channel::<app_state::HostMessage>(64);
     let state = Arc::new(AppState::new(token, DEFAULT_PORT, message_tx));
     let server_state = state.clone();
     let preset_state = state.clone();
@@ -107,7 +107,7 @@ pub fn run() {
                     // 仅"还分配着但心跳过期"(真断线)才报警;导播主动释放(已置 None)不算断线。
                     if was_online && !online && still_assigned {
                         crate::log::event(&ws, "主持人已断开连接");
-                        let _ = ws.message_tx.send(app_state::HostMessage {
+                        let _ = ws.message_tx.try_send(app_state::HostMessage {
                             from: "系统".to_string(),
                             text: "主持人已断开连接".to_string(),
                             at_ms: now,

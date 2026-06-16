@@ -11,9 +11,24 @@ const net = useNetworkState();
 const { accessUrl, localIp, serverPort } = storeToRefs(net);
 const canvas = ref<HTMLCanvasElement | null>(null);
 
+function clearCanvas() {
+  const c = canvas.value;
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  if (ctx) ctx.clearRect(0, 0, c.width, c.height);
+}
+
 async function draw() {
-  if (canvas.value && accessUrl.value) {
+  if (!canvas.value) return;
+  if (!accessUrl.value) {
+    clearCanvas(); // 地址为空时清掉旧二维码,避免残留
+    return;
+  }
+  try {
     await renderQrCode(accessUrl.value, canvas.value);
+  } catch (e) {
+    console.error("QR render failed:", e);
+    clearCanvas(); // 渲染失败时不留半张旧码
   }
 }
 

@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn snapshot_falls_back_to_placeholder_when_empty() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let state = crate::app_state::AppState::new("tok".into(), 8787, tx);
         // No WGC frame, no selected_window → placeholder (a valid JPEG)
         let jpeg = snapshot_jpeg(&state, 1280, 720, 70).unwrap();
