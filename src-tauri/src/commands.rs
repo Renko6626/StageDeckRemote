@@ -25,6 +25,7 @@ pub struct DirectorStatus {
     pub server_port: u16,
     pub local_ip: Option<String>,
     pub access_url: Option<String>,
+    pub timer: Option<crate::app_state::TimerView>,
 }
 
 #[tauri::command]
@@ -44,6 +45,10 @@ pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
         server_port: i.server_port,
         local_ip,
         access_url,
+        timer: i
+            .timer
+            .as_ref()
+            .map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
     }
 }
 
@@ -196,4 +201,44 @@ pub fn send_to_presenter(state: State<Arc<AppState>>, id: String) {
 pub fn get_snapshot(state: State<Arc<AppState>>) -> Result<String, String> {
     let bytes = crate::capture::snapshot_jpeg(&state, 1280, 720, 70).map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// 导播 GUI:启动计时(从满开始倒计时,ms 毫秒)。
+#[tauri::command]
+pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {
+    if let Ok(mut i) = state.inner.lock() {
+        i.timer = Some(crate::app_state::TimerState {
+            duration_ms: ms,
+            running: true,
+            started_at_ms: crate::app_state::now_ms(),
+            elapsed_before_ms: 0,
+        });
+    }
+    log::event(&state, "计时:开始");
+}
+
+/// 导播 GUI:暂停 / 继续。
+#[tauri::command]
+pub fn timer_toggle(state: State<Arc<AppState>>) {
+    if let Ok(mut i) = state.inner.lock() {
+        if let Some(t) = i.timer.as_mut() {
+            let now = crate::app_state::now_ms();
+            if t.running {
+                t.elapsed_before_ms += now.saturating_sub(t.started_at_ms);
+                t.running = false;
+            } else {
+                t.started_at_ms = now;
+                t.running = true;
+            }
+        }
+    }
+}
+
+/// 导播 GUI:重置(清空)计时。
+#[tauri::command]
+pub fn timer_reset(state: State<Arc<AppState>>) {
+    if let Ok(mut i) = state.inner.lock() {
+        i.timer = None;
+    }
+    log::event(&state, "计时:重置");
 }

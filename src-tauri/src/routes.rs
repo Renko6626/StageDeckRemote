@@ -126,6 +126,7 @@ async fn status(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery>)
             "presenter_unlocked": i.presenter_unlocked,
             "active_client_id": i.active_client_id,
             "director_message": i.director_message.clone(),
+            "timer": i.timer.as_ref().map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
             "server_time": now_secs(),
         })
     };
