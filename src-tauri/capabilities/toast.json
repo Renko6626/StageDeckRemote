@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "toast",
+  "description": "置顶软弹窗(toast 窗口):监听 host-message 事件、自隐藏、唤起主窗口。",
+  "windows": ["toast"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-hide",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus"
+  ]
+}
