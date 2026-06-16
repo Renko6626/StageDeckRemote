@@ -32,7 +32,7 @@ pub struct PresetMessage {
     pub text: String,
 }
 
-/// 一条已收到的消息。本期 from 恒为 "presenter";字段保留以备导播→主持人。
+/// 一条要弹给导播的消息;`from` 标注来源("主持人" / "系统")。
 #[derive(Clone, Debug, Serialize)]
 pub struct HostMessage {
     pub from: String,

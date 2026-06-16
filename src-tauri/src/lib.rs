@@ -94,16 +94,18 @@ pub fn run() {
                 loop {
                     interval.tick().await;
                     let now = app_state::now_ms();
-                    let online = if let Ok(mut i) = ws.inner.lock() {
+                    let (online, still_assigned) = if let Ok(mut i) = ws.inner.lock() {
                         let on = app_state::controller_online(&i, now);
+                        let assigned = i.active_client_id.is_some();
                         if was_online && !on {
                             i.active_client_id = None;
                         }
-                        on
+                        (on, assigned)
                     } else {
-                        was_online
+                        (was_online, false)
                     };
-                    if was_online && !online {
+                    // 仅"还分配着但心跳过期"(真断线)才报警;导播主动释放(已置 None)不算断线。
+                    if was_online && !online && still_assigned {
                         crate::log::event(&ws, "主持人已断开连接");
                         let _ = ws.message_tx.send(app_state::HostMessage {
                             from: "系统".to_string(),

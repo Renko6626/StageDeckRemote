@@ -73,9 +73,6 @@
   function canAct() {
     return state.online && state.allowed && state.unlocked && state.isController;
   }
-  function canTransport() {
-    return state.online && state.allowed && state.isController;
-  }
 
   // ── render: single DOM update point ──
   function render() {
