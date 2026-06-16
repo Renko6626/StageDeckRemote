@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{Manager, State};
+use base64::Engine;
 
 use crate::app_state::{AppState, TargetWindow};
 use crate::log::LogEntry;
@@ -198,4 +199,11 @@ pub fn send_to_presenter(state: State<Arc<AppState>>, id: String) {
         text
     };
     log::event(&state, format!("已通知主持人：{sent}"));
+}
+
+/// 导播 GUI:进程内取一帧捕获,返回 base64 JPEG(避免 webview 跨源拉环回 HTTP)。
+#[tauri::command]
+pub fn get_snapshot(state: State<Arc<AppState>>) -> Result<String, String> {
+    let bytes = crate::capture::snapshot_jpeg(&state, 1280, 720, 70).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
