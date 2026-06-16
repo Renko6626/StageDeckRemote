@@ -27,13 +27,13 @@ base64 = "0.22"
 # 本地 Web 服务（主持人端 HTTP/WS API）
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
-tower-http = { version = "0.6", features = ["cors"] }
 
 # 截图编码
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 # token 生成
 rand = "0.8"
+constant_time_eq = "0.3"
 
 # 原生 Win32 能力（枚举窗口 / 截图 / 模拟输入）仅在 Windows 下编译。
 # 非 Windows 目标走 #[cfg(not(windows))] 占位实现，便于在 Linux/macOS 上开发与编译服务层。

@@ -8,14 +8,12 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Config {
     pub server_port: u16,
-    pub last_selected_window_title: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             server_port: 8787,
-            last_selected_window_title: String::new(),
         }
     }
 }
