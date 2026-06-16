@@ -9,11 +9,14 @@ use image::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
-use std::sync::mpsc::{sync_channel, SyncSender};
+#[cfg(windows)]
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 use crate::app_state::{AppState, TargetWindow};
-use crate::frame_broker::{sample_hash, EncodedFrame, FrameBroker};
+use crate::frame_broker::{EncodedFrame, FrameBroker};
+#[cfg(windows)]
+use crate::frame_broker::sample_hash;
 
 #[derive(Debug)]
 pub enum CaptureError {
@@ -101,10 +104,6 @@ pub struct CaptureManager {
     stop_flag: Arc<AtomicBool>,
     /// 编码线程句柄（WGC signal 驱动 或 BitBlt 定时循环），stop() 时 join。
     encoder: Mutex<Option<std::thread::JoinHandle<()>>>,
-    /// WGC 模式下发给捕获 handler 的 signal sender 的本端副本；
-    /// stop() 时 drop 它（叠加 WGC 关闭后 handler 那端 drop）让编码线程的 `for _ in sig_rx` 结束。
-    #[cfg(windows)]
-    signal_tx: Mutex<Option<SyncSender<()>>>,
 }
 
 impl CaptureManager {
@@ -116,8 +115,6 @@ impl CaptureManager {
             control: Mutex::new(None),
             stop_flag: Arc::new(AtomicBool::new(false)),
             encoder: Mutex::new(None),
-            #[cfg(windows)]
-            signal_tx: Mutex::new(None),
         }
     }
 
@@ -148,19 +145,18 @@ impl CaptureManager {
         #[cfg(windows)]
         {
             let (sig_tx, sig_rx) = sync_channel::<()>(1);
-            match crate::capture_session::start(hwnd, self.latest.clone(), sig_tx.clone()) {
+            // sig_tx 整体移交给 WGC handler 持有（不留本端副本）：这样 handler 是唯一 sender，
+            // 无论 stop() 关 WGC、还是 WGC 自行终止（捕获窗口关闭/帧错误），handler 一 drop sig_rx 即关闭,
+            // 编码线程的 `for _ in sig_rx` 随之结束、线程自退,不会滞留。
+            match crate::capture_session::start(hwnd, self.latest.clone(), sig_tx) {
                 Ok(ctrl) => {
                     if let Ok(mut c) = self.control.lock() {
                         *c = Some(ctrl);
-                    }
-                    if let Ok(mut s) = self.signal_tx.lock() {
-                        *s = Some(sig_tx);
                     }
                     let latest = self.latest.clone();
                     let broker = self.broker.clone();
                     let handle = std::thread::spawn(move || {
                         let mut last_hash = 0u64;
-                        // sig_rx 在所有 sender drop（stop 丢本端 + WGC 关闭丢 handler 端）后结束循环。
                         for _ in sig_rx {
                             encode_changed(&latest, &broker, &mut last_hash);
                         }
@@ -215,18 +211,14 @@ impl CaptureManager {
         }
     }
 
-    /// 停止当前会话：停 BitBlt 循环 + drop signal + 关 WGC → 编码线程退出 → join。
+    /// 停止当前会话：停 BitBlt 循环 + 关 WGC（handler 持有的唯一 sender drop → sig_rx 关闭 → 编码线程退出）+ join。
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
         #[cfg(windows)]
         {
-            // drop 本端 sender（叠加下面关 WGC 后 handler 端 drop）→ WGC 编码线程退出。
-            if let Ok(mut s) = self.signal_tx.lock() {
-                *s = None;
-            }
             if let Ok(mut c) = self.control.lock() {
                 if let Some(ctrl) = c.take() {
-                    let _ = ctrl.stop(); // 关 WGC → handler drop → 其 sender drop
+                    let _ = ctrl.stop(); // 关 WGC → handler drop → 其 sender drop → sig_rx 关闭
                 }
             }
         }
