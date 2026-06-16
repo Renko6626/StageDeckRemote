@@ -49,19 +49,21 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(move |app| {
+            // 先加载持久化配置(端口)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
+            if let Ok(dir) = app.path().app_config_dir() {
+                let cfg = config::Config::load(&dir.join("config.json"));
+                let presets_loaded = presets::load(&dir.join("presets.json"));
+                if let Ok(mut i) = preset_state.inner.lock() {
+                    i.server_port = cfg.server_port;
+                    i.presets = presets_loaded;
+                }
+            }
+
             // 后台启动局域网 Web 服务(主持人端入口)。
             let st = server_state.clone();
             tauri::async_runtime::spawn(async move {
                 web_server::run(st).await;
             });
-
-            // 载入持久化的预制消息(覆盖默认种子)。
-            if let Ok(dir) = app.path().app_config_dir() {
-                let loaded = presets::load(&dir.join("presets.json"));
-                if let Ok(mut i) = preset_state.inner.lock() {
-                    i.presets = loaded;
-                }
-            }
 
             // 接收主持人消息 → 顶部居中软弹窗 + 任务栏闪(均不抢焦点)。
             let handle = app.handle().clone();
@@ -140,6 +142,8 @@ pub fn run() {
             commands::timer_toggle,
             commands::timer_reset,
             commands::release_controller,
+            commands::regenerate_token,
+            commands::set_server_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

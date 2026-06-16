@@ -260,3 +260,26 @@ pub fn release_controller(state: State<Arc<AppState>>) {
     }
     log::event(&state, "导播:释放控制权");
 }
+
+/// 导播 GUI:重置访问 token(踢掉所有已连主持人,二维码刷新)。
+#[tauri::command]
+pub fn regenerate_token(state: State<Arc<AppState>>) {
+    let new = crate::auth::generate_token();
+    if let Ok(mut i) = state.inner.lock() {
+        i.token = new;
+        i.active_client_id = None; // 都要重连,顺带释放控制端
+    }
+    log::event(&state, "已重置访问码(所有主持人需重新扫码)");
+}
+
+/// 导播 GUI:设置服务端口并持久化(下次启动生效;不改运行中的端口)。
+#[tauri::command]
+pub fn set_server_port(app: tauri::AppHandle, state: State<Arc<AppState>>, port: u16) {
+    if let Ok(dir) = app.path().app_config_dir() {
+        let path = dir.join("config.json");
+        let mut cfg = crate::config::Config::load(&path);
+        cfg.server_port = port;
+        let _ = cfg.save(&path);
+    }
+    log::event(&state, format!("服务端口已保存为 {port}(重启生效)"));
+}
