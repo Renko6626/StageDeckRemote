@@ -13,6 +13,7 @@ export const useAppState = defineStore("app", () => {
   const activeClientId = ref<string | null>(null);
   const logs = ref<LogEntry[]>([]);
   const timer = ref<TimerView | null>(null);
+  const presenterOnline = ref(false);
 
   function applyStatus(s: DirectorStatus) {
     remoteEnabled.value = s.remote_enabled;
@@ -21,6 +22,7 @@ export const useAppState = defineStore("app", () => {
     selectedWindow.value = s.selected_window;
     activeClientId.value = s.active_client_id;
     timer.value = s.timer;
+    presenterOnline.value = s.presenter_online;
 
     const net = useNetworkState();
     net.update({
@@ -74,6 +76,10 @@ export const useAppState = defineStore("app", () => {
     await api.timerReset();
     await refresh();
   }
+  async function releaseController() {
+    await api.releaseController();
+    await refresh();
+  }
 
   return {
     remoteEnabled,
@@ -91,5 +97,7 @@ export const useAppState = defineStore("app", () => {
     timerStart,
     timerToggle,
     timerReset,
+    presenterOnline,
+    releaseController,
   };
 });

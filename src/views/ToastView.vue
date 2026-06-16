@@ -14,6 +14,7 @@ const DURATION = 6000;
 const text = ref("");
 const time = ref("");
 const extra = ref(0); // 连发叠加计数
+const fromLabel = ref("主持人");
 const progress = ref(100);
 
 let unlisten: UnlistenFn | null = null;
@@ -51,6 +52,7 @@ function show(msg: HostMessage) {
   if (text.value) extra.value += 1; // 已有一条在显示 → 叠加计数
   text.value = msg.text;
   time.value = fmtTime(msg.at_ms);
+  fromLabel.value = msg.from || "主持人";
   deadline = Date.now() + DURATION;
   progress.value = 100;
   if (hideTimer) window.clearTimeout(hideTimer);
@@ -96,7 +98,7 @@ onUnmounted(() => {
   <div class="toast" @click="openMain">
     <div class="accent"></div>
     <div class="head">
-      <span class="who">● 主持人 · {{ time }}<span v-if="extra"> · +{{ extra }}</span></span>
+      <span class="who">● {{ fromLabel }} · {{ time }}<span v-if="extra"> · +{{ extra }}</span></span>
       <button class="x" @click.stop="dismiss">✕</button>
     </div>
     <div class="msg">{{ text }}</div>
