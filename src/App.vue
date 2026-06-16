@@ -1,5 +1,10 @@
 <script setup lang="ts">
-// 应用外壳：标题栏 + 路由出口。
+// 应用外壳：标题栏 + 齿轮设置 + 路由出口。
+import { ref } from "vue";
+
+import SettingsModal from "./components/SettingsModal.vue";
+
+const settingsOpen = ref(false);
 </script>
 
 <template>
@@ -7,8 +12,10 @@
   <div v-else class="app">
     <header class="topbar">
       <strong class="brand">STAGEDECK<span class="brand-sub">&nbsp;·&nbsp;DIRECTOR</span></strong>
+      <button class="gear" @click="settingsOpen = true" title="设置" aria-label="设置">⚙</button>
     </header>
     <router-view />
+    <SettingsModal v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -81,6 +88,14 @@ body::before {
 .topbar .brand-sub {
   color: var(--ink-faint);
   font-weight: 400;
+}
+
+.topbar .gear {
+  margin-left: auto;
+  font-size: 14px;
+  line-height: 1;
+  padding: 5px 10px;
+  color: var(--ink-dim);
 }
 
 .card {
