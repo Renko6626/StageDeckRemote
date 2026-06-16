@@ -184,13 +184,10 @@ pub fn snapshot_jpeg(
     }
 }
 
+/// 抓窗口当前矩形为原始 BGRA 帧（Windows：屏幕 DC BitBlt）。
+/// 供编码线程的 BitBlt 兜底循环复用；编码走 `encode_captured_frame`。
 #[cfg(windows)]
-fn capture_window(
-    win: &TargetWindow,
-    max_w: u32,
-    max_h: u32,
-    quality: u8,
-) -> Result<Vec<u8>, CaptureError> {
+pub fn capture_window_raw(win: &TargetWindow) -> Result<CapturedFrame, CaptureError> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
@@ -249,9 +246,24 @@ fn capture_window(
             return Err(CaptureError::Encode("BitBlt/GetDIBits 失败".into()));
         }
 
-        let rgb = bgra_to_rgb(&pixels, width as u32, height as u32);
-        encode_scaled_jpeg(&rgb, width as u32, height as u32, max_w, max_h, quality)
+        Ok(CapturedFrame { bgra: pixels, width: width as u32, height: height as u32 })
     }
+}
+
+#[cfg(not(windows))]
+pub fn capture_window_raw(_win: &TargetWindow) -> Result<CapturedFrame, CaptureError> {
+    Err(CaptureError::Encode("非 Windows：无窗口截图".into()))
+}
+
+#[cfg(windows)]
+fn capture_window(
+    win: &TargetWindow,
+    max_w: u32,
+    max_h: u32,
+    quality: u8,
+) -> Result<Vec<u8>, CaptureError> {
+    let frame = capture_window_raw(win)?;
+    encode_captured_frame(&frame, max_w, max_h, quality)
 }
 
 #[cfg(not(windows))]
@@ -332,6 +344,15 @@ mod tests {
         let f = mgr.latest_frame().unwrap();
         assert_eq!((f.width, f.height, f.bgra.len()), (1, 1, 4));
         mgr.stop(); // no-op on non-Windows, must not panic
+    }
+
+    #[test]
+    fn raw_capture_unavailable_off_windows_is_err() {
+        // 非 Windows 下 capture_window_raw 返回 Err(占位走 snapshot_jpeg 那条),不 panic
+        let win = crate::app_state::TargetWindow {
+            title: "x".into(), left: 0, top: 0, width: 0, height: 0, handle: 0,
+        };
+        assert!(capture_window_raw(&win).is_err());
     }
 
     #[test]
