@@ -105,6 +105,7 @@ pub fn run() {
             commands::get_slide_state,
             commands::get_presets,
             commands::set_presets,
+            commands::send_to_presenter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

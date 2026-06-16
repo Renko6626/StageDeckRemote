@@ -174,3 +174,28 @@ pub fn set_presets(app: tauri::AppHandle, state: State<Arc<AppState>>, texts: Ve
     }
     log::event(&state, "已更新快捷消息预制");
 }
+
+/// 导播 GUI:从共享预制池里选一条(按 id)发给主持人(主持人页内横幅显示)。
+#[tauri::command]
+pub fn send_to_presenter(state: State<Arc<AppState>>, id: String) {
+    let sent = {
+        let Ok(mut i) = state.inner.lock() else {
+            return;
+        };
+        let Some(text) = i.presets.iter().find(|p| p.id == id).map(|p| p.text.clone()) else {
+            return; // id 不在池中:不改动(前端按池内 id 调用,不会非法)
+        };
+        let seq = i.director_message.as_ref().map(|m| m.seq).unwrap_or(0) + 1;
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        i.director_message = Some(crate::app_state::DirectorMessage {
+            seq,
+            text: text.clone(),
+            at_ms,
+        });
+        text
+    };
+    log::event(&state, format!("已通知主持人：{sent}"));
+}
