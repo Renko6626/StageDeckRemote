@@ -259,6 +259,7 @@
   }
   // Brief mode-independent toast (dir-banner is a sibling of all pages → visible in MAIN/SYNC/MSG).
   function flashNotice(text) {
+    state.tokenBanner = false; // 瞬时提示不是持久的"访问码已变"横幅
     showDirBanner(text, { persist: false });
   }
 
