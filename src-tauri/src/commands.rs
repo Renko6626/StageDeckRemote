@@ -208,6 +208,35 @@ pub fn get_snapshot(state: State<Arc<AppState>>) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// 导播 GUI:订阅实时预览帧。Rust 侧订阅 broker,每来新帧把原始 JPEG 字节推入 channel。
+/// 前端 onmessage 收到 ArrayBuffer → createImageBitmap → 画 canvas。channel 关闭即结束。
+#[tauri::command]
+pub fn subscribe_preview(
+    state: State<Arc<AppState>>,
+    on_frame: tauri::ipc::Channel<tauri::ipc::Response>,
+) {
+    let mut rx = state.capture.subscribe();
+    // 先推一帧当前最新(若有)。
+    {
+        let cur = state.capture.latest_encoded();
+        if !cur.jpeg.is_empty() {
+            let _ = on_frame.send(tauri::ipc::Response::new(cur.jpeg.clone()));
+        }
+    }
+    tauri::async_runtime::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let bytes = { rx.borrow().jpeg.clone() };
+            if bytes.is_empty() {
+                continue;
+            }
+            // 前端关闭 channel 后 send 返回 Err → 退出任务。
+            if on_frame.send(tauri::ipc::Response::new(bytes)).is_err() {
+                break;
+            }
+        }
+    });
+}
+
 /// 导播 GUI:启动计时(从满开始倒计时,ms 毫秒)。
 #[tauri::command]
 pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {
