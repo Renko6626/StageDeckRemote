@@ -208,6 +208,44 @@ pub fn get_snapshot(state: State<Arc<AppState>>) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// 导播 GUI:订阅实时预览帧。Rust 侧订阅 broker,每来新帧把原始 JPEG 字节推入 channel。
+/// 前端 onmessage 收到 ArrayBuffer → createImageBitmap → 画 canvas。
+/// 注意:Tauri Channel 在窗口/页面销毁后 send **不会**报错(仅整应用退出时才报错),
+/// 故无法靠 send 失败收尾;改为「每次重新订阅就 abort 上一个推送任务」(AppState.preview_task)
+/// 保证至多一个任务、不随组件重挂/页面重载堆积。
+#[tauri::command]
+pub fn subscribe_preview(
+    state: State<Arc<AppState>>,
+    on_frame: tauri::ipc::Channel<tauri::ipc::Response>,
+) {
+    let mut rx = state.capture.subscribe();
+    // 先推一帧当前最新(若有),让导播一连上就看到当前画面。
+    {
+        let cur = state.capture.latest_encoded();
+        if !cur.jpeg.is_empty() {
+            let _ = on_frame.send(tauri::ipc::Response::new(cur.jpeg.clone()));
+        }
+    }
+    let handle = tauri::async_runtime::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let bytes = { rx.borrow().jpeg.clone() };
+            if bytes.is_empty() {
+                continue;
+            }
+            // 整应用退出时 send 失败 → 退出;窗口重挂的收尾靠下面 abort 旧任务。
+            if on_frame.send(tauri::ipc::Response::new(bytes)).is_err() {
+                break;
+            }
+        }
+    });
+    // 替换上一个推送任务:组件重挂/页面重载会再次调用本命令,abort 旧的,避免任务 + watch 接收端堆积。
+    if let Ok(mut slot) = state.preview_task.lock() {
+        if let Some(old) = slot.replace(handle) {
+            old.abort();
+        }
+    }
+}
+
 /// 导播 GUI:启动计时(从满开始倒计时,ms 毫秒)。
 #[tauri::command]
 pub fn timer_start(state: State<Arc<AppState>>, ms: u64) {

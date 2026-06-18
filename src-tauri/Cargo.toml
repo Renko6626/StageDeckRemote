@@ -1,6 +1,6 @@
 [package]
 name = "stagedeck-remote"
-version = "0.1.15"
+version = "0.1.16"
 description = "局域网 PPT 远程控制系统（导播端桌面应用）"
 authors = ["sunyunbo"]
 edition = "2021"
@@ -26,6 +26,7 @@ base64 = "0.22"
 
 # 本地 Web 服务（主持人端 HTTP/WS API）
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.7"
 
 # 截图编码

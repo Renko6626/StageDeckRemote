@@ -36,6 +36,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/presenter/presenter.js", get(presenter_js))
         .route("/api/status", get(status))
         .route("/api/snapshot.jpg", get(snapshot))
+        .route("/api/stream.mjpg", get(stream_mjpeg))
         .route("/api/click", post(click))
         .route("/api/next", post(next))
         .route("/api/prev", post(prev))
@@ -169,6 +170,37 @@ async fn snapshot(State(state): State<Arc<AppState>>, Query(q): Query<TokenQuery
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "capture error: panicked".to_string())
             .into_response(),
     }
+}
+
+/// 主持人端实时画面：MJPEG（multipart/x-mixed-replace）长连流，由帧 broker 扇出。
+/// 订阅 watch；静止时不产帧、变化才推一帧；慢消费者自动只看最新（无积压）。
+async fn stream_mjpeg(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+) -> Response {
+    if !token_ok(&state, &q.token) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
+    }
+    use tokio_stream::StreamExt;
+    let rx = state.capture.subscribe();
+    // WatchStream 立即产出当前最新帧，之后每次变化产出一帧；跳过空占位（seq 0 / 空 jpeg）。
+    let body = tokio_stream::wrappers::WatchStream::new(rx).filter_map(|frame| {
+        if frame.jpeg.is_empty() {
+            None
+        } else {
+            Some(Ok::<Vec<u8>, std::io::Error>(crate::frame_broker::mjpeg_part(
+                &frame.jpeg,
+            )))
+        }
+    });
+    Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/x-mixed-replace; boundary=frame",
+        )
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(axum::body::Body::from_stream(body))
+        .unwrap()
 }
 
 // ---- 远程点击 ----------------------------------------------------------------

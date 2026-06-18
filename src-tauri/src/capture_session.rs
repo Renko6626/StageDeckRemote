@@ -1,6 +1,7 @@
 //! WGC 后台捕获会话（仅 Windows）。把每帧紧排 BGRA 写入共享最新帧缓冲。
 //! 基于 windows-capture 2.0 的 GraphicsCaptureApiHandler。
 
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
@@ -19,18 +20,21 @@ type WgcError = Box<dyn std::error::Error + Send + Sync>;
 /// 停控句柄类型别名（Send+Sync）。供 CaptureManager 持有。
 pub type Control = CaptureControl<Handler, WgcError>;
 
-/// 捕获事件处理器：每帧写入共享缓冲。Flags 携带共享缓冲进来。
+/// 捕获事件处理器：每帧写入共享缓冲并通知编码线程。
+/// Flags 携带共享缓冲 + 编码线程的 signal sender。
 pub struct Handler {
     latest: Arc<Mutex<Option<CapturedFrame>>>,
+    signal: SyncSender<()>,
     scratch: Vec<u8>,
 }
 
 impl GraphicsCaptureApiHandler for Handler {
-    type Flags = Arc<Mutex<Option<CapturedFrame>>>;
+    type Flags = (Arc<Mutex<Option<CapturedFrame>>>, SyncSender<()>);
     type Error = WgcError;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        Ok(Self { latest: ctx.flags, scratch: Vec::new() })
+        let (latest, signal) = ctx.flags;
+        Ok(Self { latest, signal, scratch: Vec::new() })
     }
 
     fn on_frame_arrived(
@@ -45,6 +49,8 @@ impl GraphicsCaptureApiHandler for Handler {
         if let Ok(mut g) = self.latest.lock() {
             *g = Some(CapturedFrame { bgra: bgra.to_vec(), width: w, height: h });
         }
+        // 满则丢（合并），不阻塞捕获线程；编码线程据此醒来做去重 + 编码。
+        let _ = self.signal.try_send(());
         Ok(())
     }
 
@@ -56,8 +62,12 @@ impl GraphicsCaptureApiHandler for Handler {
     }
 }
 
-/// 对指定 HWND 起一个后台 WGC 会话；帧写入 `latest`。返回停控句柄。
-pub fn start(hwnd: isize, latest: Arc<Mutex<Option<CapturedFrame>>>) -> Result<Control, String> {
+/// 对指定 HWND 起一个后台 WGC 会话；帧写入 `latest`、每帧 `try_send(())` 通知编码线程。返回停控句柄。
+pub fn start(
+    hwnd: isize,
+    latest: Arc<Mutex<Option<CapturedFrame>>>,
+    signal: SyncSender<()>,
+) -> Result<Control, String> {
     let window = Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void);
     let settings = Settings::new(
         window,
@@ -67,7 +77,7 @@ pub fn start(hwnd: isize, latest: Arc<Mutex<Option<CapturedFrame>>>) -> Result<C
         MinimumUpdateIntervalSettings::Default,
         DirtyRegionSettings::Default,
         ColorFormat::Bgra8,
-        latest,
+        (latest, signal),
     );
     Handler::start_free_threaded(settings).map_err(|e| e.to_string())
 }

@@ -131,6 +131,9 @@ pub struct AppState {
     /// 收到主持人消息时投递给 Tauri 接收任务(显示软弹窗)。
     /// 有界通道:洪泛(token-gated /api/message)下满则丢弃,绝不阻塞。
     pub message_tx: Sender<HostMessage>,
+    /// 导播预览推送任务句柄。subscribe_preview 每次被调用(组件重挂/页面重载)就 abort 上一个,
+    /// 保证至多一个推送任务,避免 Tauri Channel 在窗口销毁后 send 不报错导致的任务堆积。
+    pub preview_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -160,6 +163,7 @@ impl AppState {
             }),
             capture: crate::capture::CaptureManager::new(),
             message_tx,
+            preview_task: Mutex::new(None),
         }
     }
 

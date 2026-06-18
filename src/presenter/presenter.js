@@ -10,7 +10,6 @@
     cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("sd.presenter.cid", cid);
   }
-  var SNAPSHOT_MIN = 300; // ms between snapshot frames
   var POLL = 900; // ms status + slide_state cadence
   var SLOW_POLL = 4000; // ms back-off cadence after a 401 (token changed)
 
@@ -179,6 +178,8 @@
         state.isController = !!s.is_controller;
         state.com = data[1] || state.com;
         render();
+        // token 恢复后,若仍停留在 SYNC 且流已断,自愈重连
+        if (state.mode === "sync" && !el.preview.getAttribute("src")) startStream();
         handleDirectorMessage(s.director_message);
         handleTimer(s.timer);
       })
@@ -204,6 +205,7 @@
     state.allowed = false;
     state.latency = null;
     state.tokenInvalid = !!tokenInvalid;
+    if (tokenInvalid) stopStream(); // token 失效后别让 <img> 继续重试 MJPEG
     render();
   }
   function startPolling() {
@@ -223,16 +225,17 @@
     state.statusTimer = setInterval(poll, ms);
   }
 
-  // ── snapshot chain (SYNC) ──
-  function loadFrame() {
+  // ── live stream (SYNC):MJPEG 长连,浏览器原生换帧、无闪烁、空闲零流量 ──
+  function startStream() {
     if (state.tokenInvalid) return;
-    el.preview.src = "/api/snapshot.jpg?token=" + encodeURIComponent(token) + "&t=" + Date.now();
+    el.preview.src = "/api/stream.mjpg?token=" + encodeURIComponent(token);
   }
-  el.preview.addEventListener("load", function () {
-    if (state.mode === "sync" && !state.tokenInvalid) setTimeout(loadFrame, SNAPSHOT_MIN);
-  });
+  function stopStream() {
+    el.preview.removeAttribute("src"); // 断开 MJPEG 连接
+  }
   el.preview.addEventListener("error", function () {
-    if (state.mode === "sync" && !state.tokenInvalid) setTimeout(loadFrame, 1000);
+    // 连接异常(如切走/网络):SYNC 下短延迟重连,其它模式不管
+    if (state.mode === "sync" && !state.tokenInvalid) setTimeout(startStream, 1000);
   });
 
   // ── mode switch ──
@@ -246,7 +249,8 @@
       el.pageSync.classList.toggle("active", mode === "sync");
       el.pageMsg.classList.toggle("active", mode === "msg");
       if (mode === "msg") loadMessages();
-      if (mode === "sync") loadFrame(); // (re)start the snapshot chain
+      if (mode === "sync") startStream();
+      else stopStream();
     });
   });
 

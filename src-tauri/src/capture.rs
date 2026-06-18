@@ -7,9 +7,15 @@ use image::{
     codecs::jpeg::JpegEncoder, imageops::FilterType, ExtendedColorType, ImageBuffer, ImageEncoder,
     Rgb, RgbImage,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 use crate::app_state::{AppState, TargetWindow};
+use crate::frame_broker::{EncodedFrame, FrameBroker};
+#[cfg(windows)]
+use crate::frame_broker::sample_hash;
 
 #[derive(Debug)]
 pub enum CaptureError {
@@ -84,44 +90,85 @@ pub struct CapturedFrame {
     pub height: u32,
 }
 
-/// 管理 WGC 后台捕获会话与最新帧缓冲。存于 AppState，被 snapshot 读、被选窗启停。
+/// 管理捕获源（WGC 主 / BitBlt 兜底）、最新原始帧缓冲、帧 broker 与编码线程。
+/// 存于 AppState，被 snapshot 读、被选窗启停；编码线程把变化帧 publish 到 broker。
 pub struct CaptureManager {
-    /// 后台会话写入的最新一帧；snapshot 读取。
+    /// 捕获源写入的最新一帧（原始 BGRA）；snapshot 与编码线程读取。
     latest: Arc<Mutex<Option<CapturedFrame>>>,
+    /// 一处编码、watch 扇出最新编码帧；主持人 MJPEG / 导播 Channel 各自订阅。
+    broker: Arc<FrameBroker>,
     #[cfg(windows)]
     control: Mutex<Option<crate::capture_session::Control>>,
+    /// BitBlt 兜底循环的停止信号（WGC 编码线程不看它，靠 sender drop 退出）。
+    stop_flag: Arc<AtomicBool>,
+    /// 编码线程句柄（WGC signal 驱动 或 BitBlt 定时循环），stop() 时 join。
+    encoder: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl CaptureManager {
     pub fn new() -> Self {
         Self {
             latest: Arc::new(Mutex::new(None)),
+            broker: Arc::new(FrameBroker::new()),
             #[cfg(windows)]
             control: Mutex::new(None),
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            encoder: Mutex::new(None),
         }
     }
 
-    /// 取最新帧的克隆（无则 None → snapshot 回退）。
+    /// 主持人 MJPEG / 导播 Channel 订阅入口：watch 扇出最新编码帧。
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Arc<EncodedFrame>> {
+        self.broker.subscribe()
+    }
+
+    /// 取当前最新编码帧（订阅前先推一帧用）。
+    pub fn latest_encoded(&self) -> Arc<EncodedFrame> {
+        self.broker.latest()
+    }
+
+    /// 取最新原始帧的克隆（无则 None → snapshot 回退）。
     pub fn latest_frame(&self) -> Option<CapturedFrame> {
         self.latest.lock().ok().and_then(|g| g.clone())
     }
 
-    /// 对指定窗口启动捕获会话（停旧、清最新帧）。
+    /// 对指定窗口启动捕获（停旧、清最新帧、重置 stop）。
+    /// WGC 成功 → 起 signal 驱动编码线程；失败 → 起 BitBlt 兜底定时线程。两者都喂同一 broker。
     pub fn start(&self, hwnd: isize) {
         self.stop();
         if let Ok(mut g) = self.latest.lock() {
             *g = None;
         }
+        self.stop_flag.store(false, Ordering::SeqCst);
+
         #[cfg(windows)]
         {
-            match crate::capture_session::start(hwnd, self.latest.clone()) {
+            let (sig_tx, sig_rx) = sync_channel::<()>(1);
+            // sig_tx 整体移交给 WGC handler 持有（不留本端副本）：这样 handler 是唯一 sender，
+            // 无论 stop() 关 WGC、还是 WGC 自行终止（捕获窗口关闭/帧错误），handler 一 drop sig_rx 即关闭,
+            // 编码线程的 `for _ in sig_rx` 随之结束、线程自退,不会滞留。
+            match crate::capture_session::start(hwnd, self.latest.clone(), sig_tx) {
                 Ok(ctrl) => {
                     if let Ok(mut c) = self.control.lock() {
                         *c = Some(ctrl);
                     }
+                    let latest = self.latest.clone();
+                    let broker = self.broker.clone();
+                    let handle = std::thread::spawn(move || {
+                        let mut last_hash = 0u64;
+                        for _ in sig_rx {
+                            encode_changed(&latest, &broker, &mut last_hash);
+                        }
+                    });
+                    if let Ok(mut e) = self.encoder.lock() {
+                        *e = Some(handle);
+                    }
                 }
-                // 失败（旧系统/WGC 不可用）→ 不存句柄 → snapshot 自动回退 BitBlt。
-                Err(e) => eprintln!("[stagedeck] WGC 启动失败，回退 BitBlt：{e}"),
+                // 失败（旧系统/WGC 不可用）→ BitBlt 定时兜底，仍喂同一 broker。
+                Err(e) => {
+                    eprintln!("[stagedeck] WGC 启动失败，回退 BitBlt 定时抓取：{e}");
+                    self.start_bitblt_fallback(hwnd);
+                }
             }
         }
         #[cfg(not(windows))]
@@ -130,14 +177,53 @@ impl CaptureManager {
         }
     }
 
-    /// 停止当前会话。
+    /// BitBlt 兜底：定时抓原始帧 → 采样去重 → 变化才编码 q82 → publish。
+    #[cfg(windows)]
+    fn start_bitblt_fallback(&self, hwnd: isize) {
+        let broker = self.broker.clone();
+        let stop = self.stop_flag.clone();
+        let handle = std::thread::spawn(move || {
+            let mut last_hash = 0u64;
+            let win = crate::app_state::TargetWindow {
+                title: String::new(),
+                left: 0,
+                top: 0,
+                width: 0,
+                height: 0,
+                handle: hwnd,
+            };
+            while !stop.load(Ordering::SeqCst) {
+                if let Ok(frame) = capture_window_raw(&win) {
+                    let h = sample_hash(&frame.bgra);
+                    if h != last_hash {
+                        last_hash = h;
+                        if let Ok(jpeg) = encode_captured_frame(&frame, 1280, 720, 82) {
+                            broker.publish(jpeg, frame.width, frame.height);
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+        if let Ok(mut e) = self.encoder.lock() {
+            *e = Some(handle);
+        }
+    }
+
+    /// 停止当前会话：停 BitBlt 循环 + 关 WGC（handler 持有的唯一 sender drop → sig_rx 关闭 → 编码线程退出）+ join。
     pub fn stop(&self) {
+        self.stop_flag.store(true, Ordering::SeqCst);
         #[cfg(windows)]
         {
             if let Ok(mut c) = self.control.lock() {
                 if let Some(ctrl) = c.take() {
-                    let _ = ctrl.stop();
+                    let _ = ctrl.stop(); // 关 WGC → handler drop → 其 sender drop → sig_rx 关闭
                 }
+            }
+        }
+        if let Ok(mut e) = self.encoder.lock() {
+            if let Some(h) = e.take() {
+                let _ = h.join();
             }
         }
     }
@@ -158,6 +244,39 @@ pub fn encode_captured_frame(
 ) -> Result<Vec<u8>, CaptureError> {
     let rgb = bgra_to_rgb(&frame.bgra, frame.width, frame.height);
     encode_scaled_jpeg(&rgb, frame.width, frame.height, max_w, max_h, quality)
+}
+
+/// WGC 编码线程用：锁内做廉价采样 hash 去重，仅变化时才克隆整缓冲（~8MB）出来编码 q82、publish。
+/// "drop lock before heavy work"：lock 作用域只到决定是否变化，编码在锁外。
+#[cfg(windows)]
+fn encode_changed(
+    latest: &Arc<Mutex<Option<CapturedFrame>>>,
+    broker: &Arc<FrameBroker>,
+    last_hash: &mut u64,
+) {
+    let changed = {
+        let g = match latest.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        match &*g {
+            Some(f) => {
+                let h = sample_hash(&f.bgra);
+                if h != *last_hash {
+                    *last_hash = h;
+                    Some(f.clone())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    };
+    if let Some(f) = changed {
+        if let Ok(jpeg) = encode_captured_frame(&f, 1280, 720, 82) {
+            broker.publish(jpeg, f.width, f.height);
+        }
+    }
 }
 
 /// 优先返回 WGC 最新帧；无帧则回退 BitBlt（用 selected_window）；再不行占位图。
@@ -184,13 +303,10 @@ pub fn snapshot_jpeg(
     }
 }
 
+/// 抓窗口当前矩形为原始 BGRA 帧（Windows：屏幕 DC BitBlt）。
+/// 供编码线程的 BitBlt 兜底循环复用；编码走 `encode_captured_frame`。
 #[cfg(windows)]
-fn capture_window(
-    win: &TargetWindow,
-    max_w: u32,
-    max_h: u32,
-    quality: u8,
-) -> Result<Vec<u8>, CaptureError> {
+pub fn capture_window_raw(win: &TargetWindow) -> Result<CapturedFrame, CaptureError> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
@@ -249,9 +365,24 @@ fn capture_window(
             return Err(CaptureError::Encode("BitBlt/GetDIBits 失败".into()));
         }
 
-        let rgb = bgra_to_rgb(&pixels, width as u32, height as u32);
-        encode_scaled_jpeg(&rgb, width as u32, height as u32, max_w, max_h, quality)
+        Ok(CapturedFrame { bgra: pixels, width: width as u32, height: height as u32 })
     }
+}
+
+#[cfg(not(windows))]
+pub fn capture_window_raw(_win: &TargetWindow) -> Result<CapturedFrame, CaptureError> {
+    Err(CaptureError::Encode("非 Windows：无窗口截图".into()))
+}
+
+#[cfg(windows)]
+fn capture_window(
+    win: &TargetWindow,
+    max_w: u32,
+    max_h: u32,
+    quality: u8,
+) -> Result<Vec<u8>, CaptureError> {
+    let frame = capture_window_raw(win)?;
+    encode_captured_frame(&frame, max_w, max_h, quality)
 }
 
 #[cfg(not(windows))]
@@ -332,6 +463,15 @@ mod tests {
         let f = mgr.latest_frame().unwrap();
         assert_eq!((f.width, f.height, f.bgra.len()), (1, 1, 4));
         mgr.stop(); // no-op on non-Windows, must not panic
+    }
+
+    #[test]
+    fn raw_capture_unavailable_off_windows_is_err() {
+        // 非 Windows 下 capture_window_raw 返回 Err(占位走 snapshot_jpeg 那条),不 panic
+        let win = crate::app_state::TargetWindow {
+            title: "x".into(), left: 0, top: 0, width: 0, height: 0, handle: 0,
+        };
+        assert!(capture_window_raw(&win).is_err());
     }
 
     #[test]

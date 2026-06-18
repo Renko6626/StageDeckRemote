@@ -10,6 +10,7 @@ mod capture;
 mod capture_session;
 mod commands;
 mod config;
+mod frame_broker;
 mod input;
 mod log;
 mod network;
@@ -136,6 +137,7 @@ pub fn run() {
             commands::set_presets,
             commands::send_to_presenter,
             commands::get_snapshot,
+            commands::subscribe_preview,
             commands::timer_start,
             commands::timer_toggle,
             commands::timer_reset,
