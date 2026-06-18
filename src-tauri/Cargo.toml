@@ -26,6 +26,7 @@ base64 = "0.22"
 
 # 本地 Web 服务（主持人端 HTTP/WS API）
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.7"
 
 # 截图编码
