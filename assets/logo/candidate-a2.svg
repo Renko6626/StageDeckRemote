@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A2 bold/mono: 粗长准星 + 大实心三角,无红点(极小尺寸最清晰) -->
+  <rect width="128" height="128" fill="#101012"/>
+  <g fill="none" stroke="#ededee" stroke-width="8" stroke-linecap="square">
+    <path d="M14 44 V14 H44"/>
+    <path d="M84 14 H114 V44"/>
+    <path d="M14 84 V114 H44"/>
+    <path d="M84 114 H114 V84"/>
+  </g>
+  <polygon points="48,38 48,90 94,64" fill="#ededee"/>
+</svg>

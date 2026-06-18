@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A3 advance: 准星框 + 双 V 形 "下一页/前进" 雪佛龙 + 红点 -->
+  <rect width="128" height="128" fill="#101012"/>
+  <g fill="none" stroke="#ededee" stroke-width="6" stroke-linecap="square">
+    <path d="M16 38 V16 H38"/>
+    <path d="M90 16 H112 V38"/>
+    <path d="M16 90 V112 H38"/>
+    <path d="M90 112 H112 V90"/>
+  </g>
+  <g fill="none" stroke="#ededee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M48 46 L66 64 L48 82"/>
+    <path d="M66 46 L84 64 L66 82"/>
+  </g>
+  <circle cx="98" cy="64" r="4.5" fill="#d23b3b"/>
+</svg>
