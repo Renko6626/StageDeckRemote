@@ -19,6 +19,8 @@ async function pollState() {
   }
 }
 
+// 解码异步:理论上相邻帧可能乱序落地,但 broker 变化门控 + 低帧率下几乎不会并发在飞,
+// 即便偶发陈旧一帧也会被下一帧覆盖,故不加序号守卫。
 async function drawFrame(buf: ArrayBuffer) {
   const canvas = canvasEl.value;
   if (!canvas) return;
@@ -43,7 +45,10 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (stateTimer) window.clearInterval(stateTimer);
-  channel = null; // 释放引用;Rust 侧下次 send 失败即结束推送任务
+  // 释放本地引用。注意:置 null 不会通知 Rust(Channel 无 JS→Rust 关闭信号)——
+  // 旧推送任务由后端在「下次 subscribe_preview 时 abort 上一个」收尾(见 commands.rs)。
+  // 本组件在导播单窗口内只挂一次,残留任务至多一个、应用退出时回收。
+  channel = null;
 });
 </script>
 
