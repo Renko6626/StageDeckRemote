@@ -491,8 +491,8 @@ body::before {
   padding: 2px 6px;
 }
 
-/* ─── show timer (status bar) ─── */
-#timer-stat.over b {
+/* ─── show timer (occupies big readout slot; red on overrun) ─── */
+.readout.over .readout-v {
   color: var(--danger);
 }
 

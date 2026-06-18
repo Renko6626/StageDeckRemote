@@ -20,7 +20,6 @@
           <span class="stat"><span class="dot" id="conn-dot"></span><b id="conn-text">LINK…</b></span>
           <span class="stat">LAT <b id="latency">--</b></span>
           <span class="stat">PG <b id="slide-pos">--/--</b></span>
-          <span class="stat" id="timer-stat" hidden>计时 <b id="timer-val">--</b></span>
         </span>
       </header>
 
@@ -32,10 +31,10 @@
       </nav>
 
       <!-- ─── shared readout ─── -->
-      <section class="readout">
-        <span class="readout-k">SLIDE</span>
+      <section class="readout" id="readout">
+        <span class="readout-k" id="readout-label">SLIDE</span>
         <span class="readout-v" id="slide-big">--</span>
-        <span class="readout-k">/ <span id="slide-total">--</span></span>
+        <span class="readout-k" id="slide-frac">/ <span id="slide-total">--</span></span>
         <span class="show-flag" id="show-flag">IDLE</span>
       </section>
 
