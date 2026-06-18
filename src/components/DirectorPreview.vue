@@ -1,16 +1,15 @@
 <script setup lang="ts">
-// 实时捕获预览(只读监看)+ COM 状态头条带。
-// 帧走 Tauri IPC(get_snapshot,进程内 → 避免 webview 跨源拉环回 HTTP);头条带轮询 get_slide_state。
+// 实时捕获预览:帧走 Tauri Channel(broker 推送,变化才来)→ canvas 双缓冲;头条带轮询 slide_state。
 import { ref, onMounted, onUnmounted } from "vue";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import { api, type SlideState } from "../utils/api";
 
 const slide = ref<SlideState | null>(null);
-const frameSrc = ref("");
 const frameOk = ref(false);
+const canvasEl = ref<HTMLCanvasElement | null>(null);
 let stateTimer: number | undefined;
-let frameTimer: number | undefined;
-let alive = true;
+let channel: Channel<ArrayBuffer> | null = null;
 
 async function pollState() {
   try {
@@ -20,28 +19,31 @@ async function pollState() {
   }
 }
 
-// 帧链:取一帧 → 显示 → 排下一帧(自调度,慢捕获不堆积)。
-async function loadFrame() {
-  if (!alive) return;
+async function drawFrame(buf: ArrayBuffer) {
+  const canvas = canvasEl.value;
+  if (!canvas) return;
   try {
-    const b64 = await api.getSnapshot();
-    frameSrc.value = "data:image/jpeg;base64," + b64;
+    const bmp = await createImageBitmap(new Blob([buf], { type: "image/jpeg" }));
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
+    canvas.getContext("2d")?.drawImage(bmp, 0, 0);
+    bmp.close();
     frameOk.value = true;
   } catch {
-    frameOk.value = false;
+    /* 单帧解码失败忽略,保留上一帧 */
   }
-  if (alive) frameTimer = window.setTimeout(loadFrame, 400);
 }
 
 onMounted(() => {
   void pollState();
   stateTimer = window.setInterval(pollState, 1500);
-  void loadFrame();
+  channel = new Channel<ArrayBuffer>();
+  channel.onmessage = (buf) => void drawFrame(buf);
+  void invoke("subscribe_preview", { onFrame: channel });
 });
 onUnmounted(() => {
-  alive = false;
   if (stateTimer) window.clearInterval(stateTimer);
-  if (frameTimer) window.clearTimeout(frameTimer);
+  channel = null; // 释放引用;Rust 侧下次 send 失败即结束推送任务
 });
 </script>
 
@@ -60,7 +62,7 @@ onUnmounted(() => {
       </span>
     </header>
     <div class="stage">
-      <img v-show="frameOk" :src="frameSrc" alt="PPT 捕获预览" draggable="false" />
+      <canvas v-show="frameOk" ref="canvasEl" class="frame"></canvas>
       <div class="placeholder" v-if="!frameOk">等待捕获 · 未选择 PPT 窗口</div>
     </div>
   </section>
@@ -129,7 +131,7 @@ onUnmounted(() => {
   justify-content: center;
   overflow: hidden;
 }
-.stage img {
+.stage .frame {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
