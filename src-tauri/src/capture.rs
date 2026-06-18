@@ -9,7 +9,6 @@ use image::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
-#[cfg(windows)]
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
