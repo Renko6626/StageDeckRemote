@@ -39,8 +39,9 @@
     dirBannerText: document.getElementById("dir-banner-text"),
     dirBannerTime: document.getElementById("dir-banner-time"),
     dirBannerX: document.getElementById("dir-banner-x"),
-    timerStat: document.getElementById("timer-stat"),
-    timerVal: document.getElementById("timer-val"),
+    readout: document.getElementById("readout"),
+    readoutLabel: document.getElementById("readout-label"),
+    slideFrac: document.getElementById("slide-frac"),
     viewonly: document.getElementById("viewonly"),
   };
 
@@ -91,8 +92,11 @@
     var cur = state.com.current || 0;
     var tot = state.com.total || 0;
     el.slidePos.textContent = (cur || "--") + "/" + (tot || "--");
-    el.slideBig.textContent = cur ? String(cur).padStart(2, "0") : "--";
-    el.slideTotal.textContent = tot || "--";
+    if (!timerActive) {
+      // 计时进行时大字位归计时所有(handleTimer/tickTimer 写),别让幻灯片号覆盖。
+      el.slideBig.textContent = cur ? String(cur).padStart(2, "0") : "--";
+      el.slideTotal.textContent = tot || "--";
+    }
     el.showFlag.textContent = state.com.in_show ? "LIVE" : "IDLE";
     el.showFlag.classList.toggle("live", state.com.in_show);
 
@@ -369,18 +373,31 @@
   }
   el.dirBannerX.addEventListener("click", hideDirBanner);
 
-  // ── show timer (status bar, local tick) ──
+  // ── show timer (occupies the big readout slot while active; local tick) ──
   var timerBase = null; // {remaining, running, at}
   var tickHandle = null; // setInterval id — runs ONLY while a timer is active
+  var timerActive = false; // 大字位是否已让给计时(render() 据此不覆盖大字位)
   function handleTimer(t) {
     if (!t) {
       timerBase = null;
-      el.timerStat.hidden = true;
       if (tickHandle) { clearInterval(tickHandle); tickHandle = null; } // no timer → stop ticking
+      if (timerActive) {
+        // 退出计时模式:大字栏交还幻灯片号。
+        timerActive = false;
+        el.readoutLabel.textContent = "SLIDE";
+        el.slideFrac.hidden = false;
+        el.readout.classList.remove("over");
+        render(); // 立刻用当前幻灯片号重绘大字位
+      }
       return;
     }
     timerBase = { remaining: t.remaining_ms, running: t.running, at: Date.now() };
-    el.timerStat.hidden = false;
+    if (!timerActive) {
+      // 进入计时模式:大字栏让给计时(幻灯片号仍在状态栏 PG)。
+      timerActive = true;
+      el.readoutLabel.textContent = "计时";
+      el.slideFrac.hidden = true;
+    }
     if (!tickHandle) tickHandle = setInterval(tickTimer, 250); // active → start (guard double-start)
     tickTimer(); // paint immediately, don't wait up to 250ms
   }
@@ -394,8 +411,8 @@
   function tickTimer() {
     if (!timerBase) return;
     var live = timerBase.running ? timerBase.remaining - (Date.now() - timerBase.at) : timerBase.remaining;
-    el.timerVal.textContent = fmtTimer(live);
-    el.timerStat.classList.toggle("over", live < 0);
+    el.slideBig.textContent = fmtTimer(live); // 写进大字位
+    el.readout.classList.toggle("over", live < 0); // 超时整行转红(见 css .readout.over)
   }
 
   // ── boot ──
