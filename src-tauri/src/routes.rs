@@ -28,12 +28,14 @@ use crate::{auth, capture, input, log};
 const PRESENTER_HTML: &str = include_str!("../../src/presenter/presenter.html");
 const PRESENTER_CSS: &str = include_str!("../../src/presenter/presenter.css");
 const PRESENTER_JS: &str = include_str!("../../src/presenter/presenter.js");
+const PRESENTER_FAVICON: &str = include_str!("../../src/presenter/favicon.svg");
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/presenter", get(presenter_page))
         .route("/presenter/presenter.css", get(presenter_css))
         .route("/presenter/presenter.js", get(presenter_js))
+        .route("/presenter/favicon.svg", get(presenter_favicon))
         .route("/api/status", get(status))
         .route("/api/snapshot.jpg", get(snapshot))
         .route("/api/stream.mjpg", get(stream_mjpeg))
@@ -111,6 +113,10 @@ async fn presenter_page(
 
 async fn presenter_css() -> Response {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], PRESENTER_CSS).into_response()
+}
+
+async fn presenter_favicon() -> Response {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], PRESENTER_FAVICON).into_response()
 }
 
 async fn presenter_js() -> Response {
