@@ -1,21 +1,6 @@
-mod config;
-mod director_ws;
-mod phone_routes;
-mod session;
-
+use relay::{build_router, config, AppCtx};
+use relay::session::SessionTable;
 use std::sync::Arc;
-
-pub struct AppCtx {
-    pub sessions: session::SessionTable,
-    pub config: config::Config,
-}
-
-pub fn build_router(ctx: Arc<AppCtx>) -> axum::Router {
-    axum::Router::new()
-        .merge(director_ws::router())
-        .merge(phone_routes::router())
-        .with_state(ctx)
-}
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +8,7 @@ async fn main() {
         .unwrap_or_else(|_| "/etc/stagedeck-relay/config.toml".into());
     let cfg = config::Config::load(std::path::Path::new(&cfg_path));
     let ctx = Arc::new(AppCtx {
-        sessions: session::SessionTable::new(),
+        sessions: SessionTable::new(),
         config: cfg.clone(),
     });
     eprintln!("[stagedeck-relay] listening on {}", cfg.listen);
