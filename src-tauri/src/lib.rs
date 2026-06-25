@@ -16,6 +16,7 @@ mod log;
 mod network;
 mod ppt_com;
 mod presets;
+mod relay_client;
 mod routes;
 mod web_server;
 mod window_manager;
@@ -50,20 +51,40 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(move |app| {
-            // 先加载持久化配置(端口)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
+            // 先加载持久化配置(端口 + relay)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
             if let Ok(dir) = app.path().app_config_dir() {
                 let cfg = config::Config::load(&dir.join("config.json"));
                 let presets_loaded = presets::load(&dir.join("presets.json"));
-                let mut i = preset_state.lock();
-                i.server_port = cfg.server_port;
-                i.presets = presets_loaded;
+                {
+                    let mut i = preset_state.lock();
+                    i.server_port = cfg.server_port;
+                    i.presets = presets_loaded;
+                }
+                // 若持久化配置中 relay.enabled == true，写入 AppState.relay_config。
+                if let Some(r) = cfg.relay.filter(|r| r.enabled) {
+                    *preset_state.relay_config.lock().unwrap() =
+                        Some(relay_client::RelayConfig {
+                            base_url: r.base_url,
+                            session_id: r.session_id,
+                            secret: r.secret,
+                        });
+                }
             }
 
+            // 构建一次 router,供 LAN 监听与 relay 客户端共享。
+            let router = std::sync::Arc::new(crate::routes::router(server_state.clone()));
+
             // 后台启动局域网 Web 服务(主持人端入口)。
-            let st = server_state.clone();
+            let st_lan = server_state.clone();
+            let rt_lan = router.clone();
             tauri::async_runtime::spawn(async move {
-                web_server::run(st).await;
+                web_server::run_with_router(st_lan, rt_lan).await;
             });
+
+            // 若已配置 relay,启动 relay 客户端。
+            if let Some(cfg) = server_state.relay_config.lock().unwrap().clone() {
+                let _ = crate::relay_client::spawn(server_state.clone(), router.clone(), cfg);
+            }
 
             // 接收主持人消息 → 顶部居中软弹窗 + 任务栏闪(均不抢焦点)。
             let handle = app.handle().clone();
@@ -144,6 +165,9 @@ pub fn run() {
             commands::release_controller,
             commands::regenerate_token,
             commands::set_server_port,
+            commands::get_relay_config,
+            commands::set_relay_config,
+            commands::get_relay_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

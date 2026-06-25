@@ -158,8 +158,8 @@
   function poll() {
     var t0 = Date.now();
     Promise.all([
-      api("/api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401),
-      api("/api/slide_state?token=" + encodeURIComponent(token)).then(handle401),
+      api("api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401),
+      api("api/slide_state?token=" + encodeURIComponent(token)).then(handle401),
     ])
       .then(function (rs) {
         if (!rs[0] || !rs[1]) return; // 401 handled
@@ -232,7 +232,7 @@
   // ── live stream (SYNC):MJPEG 长连,浏览器原生换帧、无闪烁、空闲零流量 ──
   function startStream() {
     if (state.tokenInvalid) return;
-    el.preview.src = "/api/stream.mjpg?token=" + encodeURIComponent(token);
+    el.preview.src = "api/stream.mjpg?token=" + encodeURIComponent(token);
   }
   function stopStream() {
     el.preview.removeAttribute("src"); // 断开 MJPEG 连接
@@ -276,11 +276,11 @@
     var b = ev.target.closest(".act");
     if (!b || b.disabled) return;
     var shape = b.getAttribute("data-id");
-    api("/api/action", { shape: shape }).then(onActionResp).catch(function () {});
+    api("api/action", { shape: shape }).then(onActionResp).catch(function () {});
   });
 
   // ── transport dock (delegated on body) ──
-  var ACT = { prev: "/api/prev", next: "/api/next", black: "/api/black", restore: "/api/restore" };
+  var ACT = { prev: "api/prev", next: "api/next", black: "api/black", restore: "api/restore" };
   document.body.addEventListener("click", function (ev) {
     var b = ev.target.closest(".d-btn, .d-next");
     if (!b || b.disabled) return;
@@ -291,7 +291,7 @@
   // ── arm / lock ──
   el.lockBtn.addEventListener("click", function () {
     if (el.lockBtn.disabled) return;
-    api(state.unlocked ? "/api/lock" : "/api/unlock", {}).then(poll).catch(function () {});
+    api(state.unlocked ? "api/lock" : "api/unlock", {}).then(poll).catch(function () {});
   });
 
   // ── preview tap → normalized click (SYNC) ──
@@ -302,13 +302,13 @@
     var x = (ev.clientX - r.left) / r.width;
     var y = (ev.clientY - r.top) / r.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
-    api("/api/click", { x: x, y: y }).then(onActionResp).catch(function () {});
+    api("api/click", { x: x, y: y }).then(onActionResp).catch(function () {});
   });
 
   // ── quick messages (MSG) ──
   var sentTimer = null;
   function loadMessages() {
-    api("/api/messages?token=" + encodeURIComponent(token))
+    api("api/messages?token=" + encodeURIComponent(token))
       .then(handle401)
       .then(function (r) { return r ? r.json() : null; })
       .then(function (list) {
@@ -334,7 +334,7 @@
   el.msgGrid.addEventListener("click", function (ev) {
     var b = ev.target.closest(".msg-btn");
     if (!b) return;
-    api("/api/message", { id: b.getAttribute("data-id") })
+    api("api/message", { id: b.getAttribute("data-id") })
       .then(function (r) { flashSent(r && r.ok ? "已发送 ✓" : "发送失败"); })
       .catch(function () { flashSent("发送失败"); });
   });

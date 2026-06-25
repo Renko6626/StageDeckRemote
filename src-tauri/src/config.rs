@@ -8,14 +8,26 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Config {
     pub server_port: u16,
+    #[serde(default)]
+    pub relay: Option<RelayConfigPersist>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             server_port: 8787,
+            relay: None,
         }
     }
+}
+
+/// Relay 配置的持久化形式（config.json 中的 "relay" 字段）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayConfigPersist {
+    pub base_url: String,
+    pub session_id: String,
+    pub secret: String,
+    pub enabled: bool,
 }
 
 impl Config {

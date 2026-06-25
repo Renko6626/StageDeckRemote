@@ -23,6 +23,13 @@ export interface DirectorStatus {
   access_url: string | null;
   timer: TimerView | null;
   presenter_online: boolean;
+  relay_access_url: string | null;
+}
+
+export interface RelayConfigDto {
+  base_url: string;
+  session_id: string;
+  secret: string;
 }
 
 export interface LogEntry {
@@ -76,4 +83,7 @@ export const api = {
   releaseController: () => invoke<void>("release_controller"),
   regenerateToken: () => invoke<void>("regenerate_token"),
   setServerPort: (port: number) => invoke<void>("set_server_port", { port }),
+  getRelayConfig: () => invoke<RelayConfigDto | null>("get_relay_config"),
+  setRelayConfig: (cfg: RelayConfigDto | null) => invoke<void>("set_relay_config", { cfg }),
+  getRelayStatus: () => invoke<string>("get_relay_status"),
 };
