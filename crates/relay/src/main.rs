@@ -1,8 +1,7 @@
 mod config;
 mod director_ws;
+mod phone_routes;
 mod session;
-// phone_routes will be added in Tasks 3-5; placeholder:
-// mod phone_routes;
 
 use std::sync::Arc;
 
@@ -14,7 +13,7 @@ pub struct AppCtx {
 pub fn build_router(ctx: Arc<AppCtx>) -> axum::Router {
     axum::Router::new()
         .merge(director_ws::router())
-        // .merge(phone_routes::router())  // Task 3-5
+        .merge(phone_routes::router())
         .with_state(ctx)
 }
 
