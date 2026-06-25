@@ -6,6 +6,10 @@
 >
 > 约定取值（来自 [`project.md` §8.3](project.md)，可按现场调整）：
 > 网段 `192.168.50.0/24`，导播电脑固定 IP `192.168.50.10`，控制端口 `8787`。
+>
+> **v0.2.0 起新增 Relay 模式**（CLAB 等校内中继服务器），作为场馆 WiFi 不可控时的备选路径——
+> 本文 §1–§6 是 LAN 直连模式，§7 是 Relay 模式的部署/使用指引；架构层面见
+> [`architecture.md` §11](architecture.md)。
 
 ---
 
@@ -113,3 +117,101 @@
 - 备用翻页笔、备用手机（提前扫码就绪）。
 - 导播端本地按钮可随时人工兜底翻页 / 黑屏 / 接管（[`project.md` §6.1.4](project.md)）。
 - 详见彩排清单 [`project.md` §17](project.md) 与风险预案 §18。
+
+---
+
+## 7. Relay 模式（场馆 WiFi 不可控时的备选路径）
+
+**用在什么场景**：场馆 WiFi 有 AP 隔离 / 客户端隔离 / 强制门户 / 出口不稳，
+但你能在校园网里拿到一台 Linux 服务器（如 PKU CLAB）。导播 PC 和主持人手机**各自独立**
+连上中继，绕过场馆点对点限制。LAN 模式同时保留，开演前看场地条件挑哪条。
+
+### 7.1 边界与不解决的问题
+
+- 中继只解决"对等阻断"。**双方仍必须能进校园网**（导播走场馆 WiFi 出口 + 校园 VPN，
+  或手机走校园 WiFi）。蜂窝走不到内网中继。
+- 校园 WiFi 的**强制门户**得提前认证好，本系统不替你处理 captive portal。
+- Relay 重启对正在进行的会话是硬中断（无持久化），导播会自动重连。
+
+### 7.2 一次性准备 C：在中继服务器上部署 relay
+
+> 部署目标：让 relay binary 作为 systemd 服务长跑，监听 `0.0.0.0:8080`。
+
+1. **拿二进制**：在开发机 `cargo build --release -p relay` 编出 `target/release/relay`，
+   `scp` 到中继服务器（如 `/usr/local/bin/stagedeck-relay`）。
+2. **配置**：建 `/etc/stagedeck-relay/config.toml`（可选；缺省值能跑）：
+
+   ```toml
+   # listen 默认 0.0.0.0:8080
+   listen = "0.0.0.0:8080"
+   # session 宽限期（导播 WS 断后保留会话多少秒，等待重连）
+   session_grace_secs = 60
+   # 单次隧道请求超时
+   tunnel_timeout_secs = 30
+   ```
+
+3. **systemd 单元**：`/etc/systemd/system/stagedeck-relay.service`：
+
+   ```ini
+   [Unit]
+   Description=StageDeck Relay
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   ExecStart=/usr/local/bin/stagedeck-relay
+   Environment=STAGEDECK_RELAY_CONFIG=/etc/stagedeck-relay/config.toml
+   Restart=on-failure
+   RestartSec=2
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   `systemctl enable --now stagedeck-relay` 启用 + 启动；`journalctl -u stagedeck-relay -f`
+   看运行日志。
+
+4. **健康检查**：本机 `curl http://127.0.0.1:8080/r/SANITY/api/status?token=anything`
+   应返回 `502 session_unavailable`（说明 axum 起来了、路由认得，只是没注册过 `SANITY` 会话）。
+
+5. **校园网内可达性**：从另一台校园网内的机器 `curl http://<relay-host>:8080/...`
+   应能连通。**不需要公网 IP**——v1 不上 TLS，纯校园内 HTTP/WS。
+
+### 7.3 导播端开演前：填 Relay 配置
+
+1. 打开 **StageDeck Remote → Settings**。
+2. 在 **Relay** 段填三项：
+   - **base_url**：`ws://<relay-host>:8080`（注意是 `ws://`，不是 `http://`，因为 director 与 relay
+     之间走 WebSocket；二维码上的 `http://` 是手机访问 relay 的方向，由系统自动算出来）。
+   - **session_id**：自定的短码，正则 `[A-Z0-9-]{4,16}`，比如 `PROM-2026`、`OPEN-MIC-3`。
+     这就是手机扫码 URL 里的 `<sid>`。
+   - **secret**：预共享密钥（你自己定的一串字符）；**关键**——防别人占用同一个 session_id。
+3. **保存**。这个改动需要**重启导播应用**才能生效（启动时才会去连 relay）。
+
+### 7.4 开演流程（Relay 模式）
+
+1. 路由器 / 场馆 WiFi 该启的启，导播 PC **接入校园网**（任何途径都行：有线 + VPN、场馆 WiFi 出口可达校内）。
+2. 启动 StageDeck Remote → 看 Settings 里 **Relay 状态** 变成 `connected`（绿色●）；不连绿就回 §7.5 排障。
+3. 二维码面板上切到 **Relay** 模式，让它生成形如
+   `http://<relay-host>:8080/r/PROM-2026/presenter?token=xxxx` 的码。
+4. 主持人手机扫这个码（手机也要进校园网；可走校园 WiFi 或校园 VPN）。
+5. 自检：让主持人**释放控制**，点一下预览图、翻一次页。
+
+### 7.5 Relay 模式排障
+
+| 症状 | 可能原因 | 处理 |
+| --- | --- | --- |
+| Settings 里 Relay 状态卡在 `connecting` | base_url 写错 / relay 不在校园网可达 / 防火墙 | 在导播 PC 上 `curl http://<relay-host>:8080/` 看通不通；不通先回 §7.2 第 4-5 步 |
+| 状态 `error: secret_mismatch` | 同一个 session_id 已被其他 secret 注册过 | 换 session_id，或在 relay 上重启服务清掉旧 session（v1 无持久化） |
+| 状态 `error: bad_sid` | session_id 不符合 `[A-Z0-9-]{4,16}` | 重新填、保存、重启 |
+| 状态 `connected` 但手机扫码 502 | relay 觉得没人在；多半是导播又掉了 / 二维码里 `<sid>` 拼错了 | 让导播看 Settings，确认还是 connected；二维码用 QR 面板生成、别手抄 |
+| 状态 `connected` 但手机 504 | 隧道 30s 内导播没回响应 | 导播侧应用卡了——切回 LAN 模式或重启导播 |
+| 画面突然停了一阵 | 推流 WS 断；导播侧自动重连 | 等几秒；本地一般 ≤5s 重连。如果反复断，看 relay 与导播之间的网络抖动 |
+
+### 7.6 关于 Relay 和 LAN 模式并存
+
+- 两种模式**软件层完全并存**，看二维码 URL 指哪去。开演前可以临场决定走哪条。
+- LAN 模式无需 relay 在场；Relay 模式无需带路由器/AP。
+- 同一份主持人页源码，不感知部署模式——所有 API 都走相对路径，由 `<base href>` 锚定。
+  设计层面见 [`architecture.md` §11](architecture.md)。
