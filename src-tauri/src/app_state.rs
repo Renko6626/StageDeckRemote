@@ -134,6 +134,12 @@ pub struct AppState {
     /// 导播预览推送任务句柄。subscribe_preview 每次被调用(组件重挂/页面重载)就 abort 上一个,
     /// 保证至多一个推送任务,避免 Tauri Channel 在窗口销毁后 send 不报错导致的任务堆积。
     pub preview_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Relay 配置(无则不启动 relay 客户端)。
+    pub relay_config: Mutex<Option<crate::relay_client::RelayConfig>>,
+    /// 当前 relay 客户端连接状态。
+    pub relay_status: Mutex<crate::relay_client::RelayStatus>,
+    /// 当 relay_client 在跑时,这里有一个 sender;regenerate_token 时通过它推 TokenUpdate 给 relay。
+    pub relay_notify: Mutex<Option<tokio::sync::mpsc::UnboundedSender<protocol::ControlMessage>>>,
 }
 
 impl AppState {
@@ -164,6 +170,9 @@ impl AppState {
             capture: crate::capture::CaptureManager::new(),
             message_tx,
             preview_task: Mutex::new(None),
+            relay_config: Mutex::new(None),
+            relay_status: Mutex::new(crate::relay_client::RelayStatus::Disabled),
+            relay_notify: Mutex::new(None),
         }
     }
 

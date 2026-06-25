@@ -36,6 +36,13 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rand = "0.8"
 constant_time_eq = "0.3"
 
+# Relay 客户端（控制隧道 + 流推送）
+protocol = { path = "../crates/protocol" }
+tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "handshake"] }
+futures-util = "0.3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
 # 原生 Win32 能力（枚举窗口 / 截图 / 模拟输入）仅在 Windows 下编译。
 # 非 Windows 目标走 #[cfg(not(windows))] 占位实现，便于在 Linux/macOS 上开发与编译服务层。
 [target.'cfg(windows)'.dependencies]

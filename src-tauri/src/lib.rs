@@ -16,6 +16,7 @@ mod log;
 mod network;
 mod ppt_com;
 mod presets;
+mod relay_client;
 mod routes;
 mod web_server;
 mod window_manager;
@@ -59,11 +60,20 @@ pub fn run() {
                 i.presets = presets_loaded;
             }
 
+            // 构建一次 router,供 LAN 监听与 relay 客户端共享。
+            let router = std::sync::Arc::new(crate::routes::router(server_state.clone()));
+
             // 后台启动局域网 Web 服务(主持人端入口)。
-            let st = server_state.clone();
+            let st_lan = server_state.clone();
+            let rt_lan = router.clone();
             tauri::async_runtime::spawn(async move {
-                web_server::run(st).await;
+                web_server::run_with_router(st_lan, rt_lan).await;
             });
+
+            // 若已配置 relay,启动 relay 客户端。
+            if let Some(cfg) = server_state.relay_config.lock().unwrap().clone() {
+                let _ = crate::relay_client::spawn(server_state.clone(), router.clone(), cfg);
+            }
 
             // 接收主持人消息 → 顶部居中软弹窗 + 任务栏闪(均不抢焦点)。
             let handle = app.handle().clone();

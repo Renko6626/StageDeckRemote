@@ -12,6 +12,7 @@ use base64::Engine;
 use crate::app_state::{AppState, TargetWindow};
 use crate::log::LogEntry;
 use crate::{input, log, network, window_manager};
+use protocol;
 
 /// 导播端状态快照（喂给前端展示）。
 #[derive(Serialize)]
@@ -313,6 +314,11 @@ pub fn regenerate_token(state: State<Arc<AppState>>) {
         i.active_client_id = None; // 都要重连,顺带释放控制端
     }
     log::event(&state, "已重置访问码(所有主持人需重新扫码)");
+    // 若 relay 客户端在跑,把新 token 推给 relay。
+    if let Some(tx) = state.relay_notify.lock().unwrap().clone() {
+        let new_token = state.lock().token.clone();
+        let _ = tx.send(protocol::ControlMessage::TokenUpdate { token: new_token });
+    }
 }
 
 /// 导播 GUI:设置服务端口并持久化(下次启动生效;不改运行中的端口)。
