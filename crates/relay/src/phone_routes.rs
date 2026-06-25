@@ -37,6 +37,25 @@ pub fn router() -> Router<Arc<AppCtx>> {
         .route("/r/:sid/api/unlock", any(tunnel_post))
         .route("/r/:sid/api/message", any(tunnel_post))
         .route("/r/:sid/api/stream.mjpg", get(stream_mjpeg))
+        // /r/:sid/presenter/api/* aliases — relay-served presenter uses
+        // <base href="/r/<sid>/presenter/">, so relative "api/foo" resolves
+        // to "/r/<sid>/presenter/api/foo". These mirror the /r/:sid/api/*
+        // tunneled routes; the tunnel strips "/r/<sid>" leaving "/presenter/api/foo"
+        // which the director serves via Task 6's LAN aliases.
+        .route("/r/:sid/presenter/api/status", get(tunnel_get))
+        .route("/r/:sid/presenter/api/slide_state", get(tunnel_get))
+        .route("/r/:sid/presenter/api/messages", get(tunnel_get))
+        .route("/r/:sid/presenter/api/snapshot.jpg", get(tunnel_get))
+        .route("/r/:sid/presenter/api/next", any(tunnel_post))
+        .route("/r/:sid/presenter/api/prev", any(tunnel_post))
+        .route("/r/:sid/presenter/api/black", any(tunnel_post))
+        .route("/r/:sid/presenter/api/restore", any(tunnel_post))
+        .route("/r/:sid/presenter/api/action", any(tunnel_post))
+        .route("/r/:sid/presenter/api/click", any(tunnel_post))
+        .route("/r/:sid/presenter/api/lock", any(tunnel_post))
+        .route("/r/:sid/presenter/api/unlock", any(tunnel_post))
+        .route("/r/:sid/presenter/api/message", any(tunnel_post))
+        .route("/r/:sid/presenter/api/stream.mjpg", get(stream_mjpeg))
         // Presenter 静态资源 + <base href> 注入
         .route("/r/:sid/presenter", get(presenter_html))
         .route("/r/:sid/presenter/presenter.css", get(presenter_css))
@@ -291,6 +310,55 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         assert_eq!(&body[..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn tunnel_alias_forwards_with_presenter_prefix() {
+        let ctx = Arc::new(AppCtx {
+            sessions: crate::session::SessionTable::new(),
+            config: crate::config::Config {
+                listen: "0.0.0.0:0".parse().unwrap(),
+                session_grace_secs: 60,
+                tunnel_timeout_secs: 5,
+            },
+        });
+        let (sess, mut rx) = mk_session();
+        ctx.sessions.0.write().await.insert("SID-1234".into(), sess.clone());
+        let sess_for_resp = sess.clone();
+        tokio::spawn(async move {
+            let msg = rx.recv().await.unwrap();
+            if let ControlMessage::TunnelReq { req_id, path, .. } = msg {
+                // verify path strip behavior: /r/SID-1234/presenter/api/status → /presenter/api/status
+                assert_eq!(path, "/presenter/api/status");
+                let resp = ControlMessage::TunnelResp {
+                    req_id,
+                    status: 200,
+                    headers: vec![],
+                    body_b64: base64::engine::general_purpose::STANDARD.encode(b"aliased"),
+                };
+                let mut pend = sess_for_resp.pending.lock().await;
+                if let Some(tx) = pend.remove(&req_id) {
+                    let _ = tx.send(resp);
+                }
+            }
+        });
+        let mut q = HashMap::new();
+        q.insert("token".into(), "TOK".into());
+        let resp = tunnel(
+            ctx,
+            "SID-1234".into(),
+            q,
+            Method::GET,
+            HeaderMap::new(),
+            "/r/SID-1234/presenter/api/status?token=TOK"
+                .parse()
+                .unwrap(),
+            Bytes::new(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"aliased");
     }
 
     #[tokio::test]
