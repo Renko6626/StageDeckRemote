@@ -5,29 +5,47 @@
 > 本文补全了状态码、token 传递、字段类型与错误码全集，并以实现为准。
 > 导播端的本机 Tauri IPC（特权、不对外）见 [`architecture.md` §3/§7](architecture.md) 与 `commands.rs`，不在此文档范围。
 >
-> 标注 **【计划中】** 的部分尚未实现。
+> v0.2.0 起新增 Relay 部署形态，端点列表见 §6（LAN 别名）与 §7（Relay 路由族）；
+> 业务语义与 LAN 直连完全一致——见 [`architecture.md` §11](architecture.md)。
 
 ---
 
 ## 1. 总览
 
-- **Base URL**：`http://<导播电脑 IP>:8787`（端口默认 8787）。
-- **绑定**：服务监听 `0.0.0.0:8787`（局域网可达）。
-- **鉴权**：每个请求都要带 `token`（应用启动时随机生成）。
+### 1.1 部署形态与 Base URL
+
+两种部署同时存在，**业务语义一致**，只是路由前缀不同：
+
+| 部署 | Base URL | 路由前缀 | 说明 |
+| --- | --- | --- | --- |
+| **LAN 直连**（默认） | `http://<导播 IP>:8787` | `/api/*` 与 `/presenter/api/*`（别名，§6） | 导播 Axum 直接监听 |
+| **Relay**（v0.2.0+） | `http://<relay-host>/r/<sid>` | `/api/*` 与 `/presenter/api/*`（§7） | CLAB 中继 + WS 隧道转发到导播 |
+
+主持人页 HTML 用 `<base href>` 把所有相对路径锚定到对应前缀；**presenter.js 不感知部署模式**——
+所有调用都形如 `fetch("api/status?token=...")`。
+
+### 1.2 共通规则
+
+- **鉴权**：每个请求都要带 `token`（应用启动时随机生成，可在 Settings 重置）。
   - **GET** 请求：token 放 **query**，如 `?token=xxxx`。
   - **POST** 请求：token 放 **JSON body**。
-- **请求体**：POST 一律 `Content-Type: application/json`。
-- **响应体**：除截图(二进制 JPEG)与页面/静态资源外，均为 JSON。
+  - Relay 模式下 relay 边缘也做一次 token 校验（快速 reject），导播侧仍纵深校验。
+- **请求体**：POST 一律 `Content-Type: application/json`，64 KiB 上限（LAN 的 `DefaultBodyLimit` 与 Relay 隧道两端一致）。
+- **响应体**：除截图(二进制 JPEG)、MJPEG 流、页面/静态资源外，均为 JSON。
+- **单控制端**：所有动作端点（点击/翻页/黑屏/恢复/宏/锁/解锁/消息）额外要求请求体 `client_id` 等于
+  `active_client_id`（先到为主、控制端 >4s 无心跳后可被接管）。
 
-### 信任与三层锁
+### 1.3 信任与三层锁
 
 | 操作类别 | 放行条件 |
 | --- | --- |
-| 看状态 / 看画面 / 锁定 | token 正确即可 |
-| 翻页（next/prev）/ 解锁（unlock）| `button_allowed = remote_enabled && !control_locked` |
-| 点击预览图（click）| `click_allowed = remote_enabled && !control_locked && presenter_unlocked` |
+| 看状态 / 看画面（snapshot/stream）/ 看 slide_state / 看 messages | token 正确即可 |
+| ARM（unlock）| `button_allowed = remote_enabled && !control_locked` + `is_controller` |
+| LOCK（lock）| `is_controller`（只需控制端身份；任何时候都能主动锁） |
+| 主持人动作（next / prev / black / restore / action / click）| `click_allowed = remote_enabled && !control_locked && presenter_unlocked` + `is_controller` |
+| 发消息（message）| token 正确即可（不要求 controller，方便观察席给导播说话） |
 
-锁的来源与默认值见 [`architecture.md` §5](architecture.md)。
+锁的来源、默认值与"导播总是强势"的语义见 [`architecture.md` §5](architecture.md)。
 
 ---
 
@@ -81,14 +99,53 @@
 
 ### 2.4 `GET /api/snapshot.jpg`
 
-当前画面截图。
+当前画面一次性截图。**已不是默认推送路径**——保留为兜底/调试用，正式画面走 §2.5 的 MJPEG 流。
 
 - 请求：`?token=xxxx`
 - 成功：`200 image/jpeg`，`Cache-Control: no-store`（服务端固定 1280×720、质量 70）
 - 失败：`401 {"ok":false,"reason":"invalid_token"}`；`500`（纯文本 `capture error: ...`）
-- 说明：MVP 为 HTTP 轮询；未选窗口时返回占位图。**【计划中】** WebSocket / MJPEG 推流。
+- 说明：未选窗口时返回占位图。GDI 编码在 `tokio::task::spawn_blocking` 中执行，不阻塞 async worker。
 
-### 2.5 `POST /api/click`
+### 2.5 `GET /api/stream.mjpg`
+
+**主流推送路径**：变化驱动的 `multipart/x-mixed-replace` MJPEG 长连。
+
+- 请求：`?token=xxxx`
+- 成功：`200 multipart/x-mixed-replace; boundary=frame`，`Cache-Control: no-store`
+- 失败：`401 {"ok":false,"reason":"invalid_token"}`
+- 段格式：
+  ```
+  --frame\r\n
+  Content-Type: image/jpeg\r\n
+  Content-Length: <N>\r\n
+  \r\n
+  <N 字节 JPEG>\r\n
+  ```
+- 语义：订阅 frame_broker（`tokio::sync::watch`），连上立即推一帧当前最新（若有），之后每次帧变化推一帧；
+  空帧（seq 0 占位）跳过。空闲时（无变化）零流量。手机断 → `WatchStream` drop → 订阅自动释放。
+- 实现：[`architecture.md` §4.1](architecture.md) + [ADR-0006](adr/0006-capture-stream-broker.md)。
+
+### 2.6 `GET /api/slide_state`
+
+当前 PPT 放映窗口的页码 / 总页数 / 状态 / 该页绑定的宏 shape。
+
+- 请求：`?token=xxxx`
+- 成功：`200 application/json`
+
+```json
+{
+  "available": true,
+  "in_show": true,
+  "current": 3,
+  "total": 12,
+  "actions": [{ "id": "btnA", "label": "A 选项" }, { "id": "btnB", "label": "B 选项" }]
+}
+```
+
+- 字段：`available` = PowerPoint 可达；`in_show` = 在放映态；`actions` = 当前页 `Shape.ActionSettings(ppMouseClick).Action == 8`（运行宏）的 shape 列表；`id` = shape name，传给 §2.10 的 `action`。
+- 失败：`401 invalid_token`。PowerPoint 不可达时不报错，返回 `{available:false}`。
+
+### 2.7 `POST /api/click`
 
 在预览图上点击 → 归一化坐标 → 真实屏幕点击。
 
@@ -101,7 +158,7 @@
 | 字段 | 类型 | 必需 | 说明 |
 | --- | --- | --- | --- |
 | `token` | string | 是 | 鉴权 |
-| `client_id` | string | 否 | 客户端标识（当前仅记录） |
+| `client_id` | string | 是 | 客户端标识（用于单控制端门控） |
 | `x` / `y` | number | 是 | 归一化坐标，范围 `[0,1]` |
 
 - 成功：`200`
@@ -111,50 +168,101 @@
 ```
 
 - 映射：`screen = (left + round(x*width), top + round(y*height))`（见 [`architecture.md` §6](architecture.md)）。
-- 失败（见 §3）：`invalid_token` / `coordinate_out_of_range` / `control_locked` / `ppt_window_not_found` / `input_failed`
+- 放行条件：`click_allowed` + `is_controller`。
+- 失败（见 §3）：`invalid_token` / `not_controller` / `coordinate_out_of_range` / `control_locked` / `ppt_window_not_found` / `input_failed`。
 
-### 2.6 `POST /api/next` · `POST /api/prev`
+### 2.8 `POST /api/next` · `POST /api/prev`
 
 翻页（下一页 / 上一页）。
 
-- 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`（`client_id` 可选）
+- 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`
 - 成功：`200 {"ok":true}`
-- 放行条件：`button_allowed`
-- 失败：`invalid_token`(401) / `control_locked`(403) / `input_failed`(500)
+- 放行条件：`click_allowed` + `is_controller`。
+- 实现：优先走 `ppt_com::nav_next/prev`（COM）；COM 失败回退 `input::key_next/prev`（SendInput）。
+- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `input_failed`(500)。
 
-### 2.7 `POST /api/lock` · `POST /api/unlock`
+### 2.9 `POST /api/black` · `POST /api/restore`
+
+PowerPoint 黑屏 / 恢复（B 键效果）。
+
+- 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`
+- 成功：`200 {"ok":true}`
+- 放行条件：`click_allowed` + `is_controller`。
+- 实现：`ppt_com::set_black(true/false)`（**走独立 COM 通道，与窗口选择/截图无关**，原 OBS 方案已废弃）。
+- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `500 black_failed`。
+
+### 2.10 `POST /api/action`
+
+触发当前页一个宏 shape（由 §2.6 `slide_state` 返回的 `id` 指定）。
+
+- 请求体：`{ "token": "xxxx", "client_id": "host-tablet", "shape": "btnA" }`
+- 成功：`200 {"ok":true, "macro":"..."}`（`macro` 是服务端实际触发的宏名，供日志展示）
+- 放行条件：`click_allowed` + `is_controller`。
+- 实现：服务端**根据 shape name 重新读绑定的宏名**（不信任客户端传入），调 `Application.Run(macro, shape)`；
+  无参 fallback 兼容老模板。
+- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `500 action_failed` / `500 action_panicked`。
+
+### 2.11 `POST /api/lock` · `POST /api/unlock`
 
 主持人端本地锁定 / 释放控制。
 
 - 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`
-- `lock`：成功 `200 {"ok":true}`，置 `presenter_unlocked = false`（仅需 token）。
-- `unlock`：置 `presenter_unlocked = true`，**要求 `button_allowed`**。
-  - 失败：`invalid_token`(401) / `remote_disabled`(403)
-- 说明：导播端强制锁 / 关闭远程优先级更高，会立即清掉解锁状态。
+- `lock`：置 `presenter_unlocked = false`。放行条件：`is_controller`（任何时候控制端都能主动锁）。
+- `unlock`：置 `presenter_unlocked = true`。放行条件：`button_allowed` + `is_controller`。
+- 失败（unlock）：`invalid_token`(401) / `not_controller`(403) / `remote_disabled`(403)。
+- 说明：导播端强制锁 / 关闭远程优先级更高，会立即清掉 `presenter_unlocked` 并撤销主持人 ARM 状态。
 
-### 2.8 `POST /api/black` · `POST /api/restore`
+### 2.12 `GET /api/messages`
 
-OBS 黑屏 / 恢复。
+读取共享预制消息池（由导播在 Settings 内编辑、持久化）。
 
-- 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`
-- 当前：**【计划中】** 返回 `501 {"ok":false,"reason":"obs_not_implemented"}`
-- 目标：接入 OBS WebSocket 切场景（[`project.md` §6.3](project.md)）。
+- 请求：`?token=xxxx`
+- 成功：`200 application/json`
+
+```json
+{ "items": [{ "id": "msg-1", "text": "请准备下一段" }, { "id": "msg-2", "text": "时间到" }] }
+```
+
+- 失败：`401 invalid_token`。
+
+### 2.13 `POST /api/message`
+
+主持人按预制 id 发一条消息给导播（导播侧弹"软"toast 通知）。
+
+- 请求体：`{ "token": "xxxx", "client_id": "host-tablet", "id": "msg-1" }`
+- 成功：`200 {"ok":true}`
+- 放行条件：仅 token（**不要求** is_controller，方便观察席/副导播说话；text 由 id 在服务端从池里查得，
+  客户端不能传任意 text）。
+- 失败：`invalid_token`(401) / `400 unknown_message`。
 
 ---
 
 ## 3. 错误码
 
-失败响应统一为 `{"ok": false, "reason": "<code>"}`（§2.1/§2.4 的页面/二进制端点除外）。
+失败响应统一为 `{"ok": false, "reason": "<code>"}`（§2.1/§2.4/§2.5 的页面/二进制/流式端点除外）。
 
 | HTTP | `reason` | 触发 |
 | --- | --- | --- |
 | 401 | `invalid_token` | token 缺失或不匹配 |
 | 400 | `coordinate_out_of_range` | `x` 或 `y` 不在 `[0,1]` |
-| 403 | `control_locked` | 三层锁未放行（click / 翻页） |
+| 400 | `unknown_message` | `/api/message` 指定的 `id` 不在预制池里 |
+| 403 | `not_controller` | 单控制端门控未通过（`client_id` ≠ `active_client_id`） |
+| 403 | `control_locked` | 三层锁未放行（动作类） |
 | 403 | `remote_disabled` | unlock 时远程未开启或被强制锁 |
 | 409 | `ppt_window_not_found` | 未选中目标窗口 |
-| 500 | `input_failed` | 模拟输入失败（非 Windows 平台占位即返回此项） |
-| 501 | `obs_not_implemented` | OBS 功能尚未实现 |
+| 500 | `input_failed` / `black_failed` / `action_failed` / `action_panicked` | 后端执行失败 |
+
+### 3.1 Relay 模式额外错误码
+
+仅在 Relay 部署下由中继返回，导播侧的业务错误透传不变：
+
+| HTTP | `reason` | 触发 |
+| --- | --- | --- |
+| 401 | `invalid_token` | relay 边缘 token 校验未过 |
+| 413 | `body_too_large` | 请求体超过 64 KiB |
+| 502 | `session_unavailable` | 该 `session_id` 没有活跃的导播 WS |
+| 502 | `director_offline` | 导播 WS 已断、消息推不出去 |
+| 504 | `tunnel_timeout` | 隧道往返超过 30s |
 
 ---
 
@@ -166,18 +274,53 @@ OBS 黑屏 / 恢复。
 
 ---
 
-## 5. 计划中的演进
+## 5. 实现状态
 
-| 项 | 现状 | 目标 |
+| 项 | 现状 |
+| --- | --- |
+| 画面传输 | ✅ 已实现 `GET /api/stream.mjpg`（v0.1.16；`snapshot.jpg` 保留兜底） |
+| 黑屏 / 恢复 | ✅ 已实现（PowerPoint COM `set_black`；原 OBS 方案已废弃） |
+| 宏触发 | ✅ 已实现 `POST /api/action`（COM `Application.Run`，shape 由服务端反查宏名） |
+| 单控制端独占 | ✅ 已实现 `is_controller` 门控所有动作（先到为主、>4s 无心跳可被接管） |
+| 快捷消息 | ✅ 已实现 `GET /api/messages` + `POST /api/message`（id-only，text 服务端反查） |
+| Relay 模式 | ✅ 已实现（v0.2.0；§7） |
+| Relay session 宽限期回收 | 字段就位但后台清理任务未启用（已知限制；spec §13） |
+
+---
+
+## 6. LAN 端 `/presenter/api/*` 别名
+
+为了让 presenter.html 在 LAN 和 Relay 两种 `<base href>` 下用同一份相对路径，LAN 端**为每个 `/api/<endpoint>` 都额外注册了 `/presenter/api/<endpoint>` 别名**（路由等价、handler 同一份）。`<base href="/presenter/">` + 相对 `api/status` → 命中 `/presenter/api/status` → 等同 `/api/status`。
+
+- **业务上完全等价**，只是前缀不同。
+- 旧的裸 `/api/*` 路由保留，向后兼容已发出的二维码 / 书签 / 工具调用。
+
+---
+
+## 7. Relay 模式路由族
+
+Relay 部署下（详见 [`architecture.md` §11](architecture.md)），手机面对的 base URL 是
+`http://<relay-host>/r/<session_id>`，端点对应表：
+
+| 类别 | Relay 端 URL | 关系 |
 | --- | --- | --- |
-| 画面传输 | HTTP 轮询 `snapshot.jpg` | WebSocket / MJPEG 推流 |
-| OBS 黑屏 / 恢复 | `501 obs_not_implemented` | OBS WebSocket 切场景 |
-| 单控制端独占 | `active_client_id` 仅记录 | 抢占 / 踢出，仅一个 active client 可控 |
+| 主持人页 HTML | `GET /r/<sid>/presenter` | relay 本地服务（注入 `<base href="/r/<sid>/presenter/">`） |
+| 静态资源 | `GET /r/<sid>/presenter/{presenter.css, presenter.js, favicon.svg}` | relay 本地服务（`include_str!` 编进 binary） |
+| 推流 | `GET /r/<sid>/api/stream.mjpg` 与 `GET /r/<sid>/presenter/api/stream.mjpg` | relay 本地复刻 watch 扇出，二进制 WS 从导播取帧 |
+| 其余 API（status / snapshot / click / next / prev / black / restore / action / lock / unlock / messages / message / slide_state） | `* /r/<sid>/api/<endpoint>` 与 `* /r/<sid>/presenter/api/<endpoint>` | **隧道**：relay 边缘 token 校 → `TunnelReq` 经 WS 推给导播 → 导播喂自己的 `axum::Router` → 响应原路回送 |
+
+**§2 描述的语义在隧道两端完全保持**：导播侧 `routes.rs` 是同一份 handler。Relay 仅做：
+(a) token 边缘 401；(b) 64 KiB body 上限 → 413；(c) session 不可达 502；(d) 30s 隧道超时 504。
+业务错误（`control_locked` / `not_controller` / `ppt_window_not_found` …）由导播返回，relay 透传。
+
+会话注册协议（导播 ↔ relay 的两条 WS 上的 `ControlMessage` schema）见
+[`crates/protocol/src/lib.rs`](../crates/protocol/src/lib.rs)
+与 [ADR-0007](adr/0007-relay-hybrid-tunnel.md)。
 
 ---
 
 ## 关联
 
 - 设计与错误原因背景：[`project.md` §9](project.md)
-- 实现：`src-tauri/src/routes.rs`
+- 实现：`src-tauri/src/routes.rs`（LAN 端）+ `crates/relay/src/phone_routes.rs`（Relay 端）
 - 架构与状态模型：[`architecture.md`](architecture.md)
