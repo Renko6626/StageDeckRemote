@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import { api, type DirectorStatus, type LogEntry, type TargetWindow, type TimerView } from "../utils/api";
+import { api, type DirectorStatus, type LogEntry, type RelayConfigDto, type TargetWindow, type TimerView } from "../utils/api";
 import { useNetworkState } from "./networkState";
 
 export const useAppState = defineStore("app", () => {
@@ -15,6 +15,11 @@ export const useAppState = defineStore("app", () => {
   const timer = ref<TimerView | null>(null);
   const presenterOnline = ref(false);
 
+  // Relay 状态
+  const relayConfig = ref<RelayConfigDto | null>(null);
+  const relayStatus = ref<string>("disabled");
+  const relayAccessUrl = ref<string | null>(null);
+
   function applyStatus(s: DirectorStatus) {
     remoteEnabled.value = s.remote_enabled;
     controlLocked.value = s.control_locked;
@@ -23,6 +28,7 @@ export const useAppState = defineStore("app", () => {
     activeClientId.value = s.active_client_id;
     timer.value = s.timer;
     presenterOnline.value = s.presenter_online;
+    relayAccessUrl.value = s.relay_access_url ?? null;
 
     const net = useNetworkState();
     net.update({
@@ -37,14 +43,31 @@ export const useAppState = defineStore("app", () => {
   async function refresh() {
     const net = useNetworkState();
     try {
-      const [status, logEntries] = await Promise.all([api.getStatus(), api.getLogs()]);
+      const [status, logEntries, rsStatus] = await Promise.all([
+        api.getStatus(),
+        api.getLogs(),
+        api.getRelayStatus(),
+      ]);
       applyStatus(status);
       logs.value = logEntries;
+      relayStatus.value = rsStatus;
       net.online = true;
     } catch (e) {
       net.online = false;
       console.error("refresh failed", e);
     }
+  }
+
+  /** 从后端加载 relay 配置 + 状态（Settings 模态打开时调用）。 */
+  async function loadRelay() {
+    relayConfig.value = await api.getRelayConfig();
+    relayStatus.value = await api.getRelayStatus();
+  }
+
+  /** 保存 relay 配置（null = 清除）并更新本地缓存。 */
+  async function saveRelay(cfg: RelayConfigDto | null) {
+    await api.setRelayConfig(cfg);
+    relayConfig.value = cfg;
   }
 
   // --- 导播操作（封装 IPC，调用后立即刷新一次） ---
@@ -109,5 +132,10 @@ export const useAppState = defineStore("app", () => {
     releaseController,
     regenerateToken,
     setServerPort,
+    relayConfig,
+    relayStatus,
+    relayAccessUrl,
+    loadRelay,
+    saveRelay,
   };
 });

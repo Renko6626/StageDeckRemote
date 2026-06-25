@@ -51,13 +51,24 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(move |app| {
-            // 先加载持久化配置(端口)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
+            // 先加载持久化配置(端口 + relay)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
             if let Ok(dir) = app.path().app_config_dir() {
                 let cfg = config::Config::load(&dir.join("config.json"));
                 let presets_loaded = presets::load(&dir.join("presets.json"));
-                let mut i = preset_state.lock();
-                i.server_port = cfg.server_port;
-                i.presets = presets_loaded;
+                {
+                    let mut i = preset_state.lock();
+                    i.server_port = cfg.server_port;
+                    i.presets = presets_loaded;
+                }
+                // 若持久化配置中 relay.enabled == true，写入 AppState.relay_config。
+                if let Some(r) = cfg.relay.filter(|r| r.enabled) {
+                    *preset_state.relay_config.lock().unwrap() =
+                        Some(relay_client::RelayConfig {
+                            base_url: r.base_url,
+                            session_id: r.session_id,
+                            secret: r.secret,
+                        });
+                }
             }
 
             // 构建一次 router,供 LAN 监听与 relay 客户端共享。
@@ -154,6 +165,9 @@ pub fn run() {
             commands::release_controller,
             commands::regenerate_token,
             commands::set_server_port,
+            commands::get_relay_config,
+            commands::set_relay_config,
+            commands::get_relay_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

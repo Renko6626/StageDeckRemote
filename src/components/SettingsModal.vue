@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 导播设置模态:重置访问码 / 服务端口(重启生效)/ 提示音开关。
-import { ref } from "vue";
+// 导播设置模态:重置访问码 / 服务端口(重启生效)/ Relay 配置 / 提示音开关。
+import { ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useAppState } from "../stores/appState";
@@ -15,6 +15,11 @@ const chimeOn = ref(localStorage.getItem("sd.dir.toastChime") !== "off");
 const portInput = ref<number>(serverPort.value || 8787);
 const confirmReset = ref(false);
 const note = ref("");
+
+// Relay 表单字段
+const relayBase = ref("");
+const relaySid = ref("");
+const relaySecret = ref("");
 
 function flash(t: string) {
   note.value = t;
@@ -52,6 +57,45 @@ async function savePort() {
     flash("端口保存失败 — 请重试");
   }
 }
+
+// 打开模态时加载 relay 配置
+onMounted(async () => {
+  await app.loadRelay();
+  if (app.relayConfig) {
+    relayBase.value = app.relayConfig.base_url;
+    relaySid.value = app.relayConfig.session_id;
+    relaySecret.value = app.relayConfig.secret;
+  }
+});
+
+async function saveRelay() {
+  if (!/^[A-Z0-9-]{4,16}$/.test(relaySid.value)) {
+    flash("Session ID 必须匹配 [A-Z0-9-]{4,16}");
+    return;
+  }
+  try {
+    await app.saveRelay({
+      base_url: relayBase.value,
+      session_id: relaySid.value,
+      secret: relaySecret.value,
+    });
+    flash("Relay 配置已保存 — 重启导播生效");
+  } catch {
+    flash("Relay 保存失败 — 请重试");
+  }
+}
+
+async function clearRelay() {
+  try {
+    await app.saveRelay(null);
+    relayBase.value = "";
+    relaySid.value = "";
+    relaySecret.value = "";
+    flash("Relay 已关闭 — 重启导播生效");
+  } catch {
+    flash("操作失败 — 请重试");
+  }
+}
 </script>
 
 <template>
@@ -84,6 +128,30 @@ async function savePort() {
         <button class="chime" :class="{ on: chimeOn }" @click="toggleChime">
           收到主持人消息提示音：{{ chimeOn ? "开" : "关" }}
         </button>
+      </div>
+
+      <div class="grp">
+        <div class="glabel">Relay</div>
+        <p class="desc">
+          <span class="relay-status" :class="'rs-' + app.relayStatus.split(':')[0]">●</span>
+          {{ app.relayStatus }}
+          <template v-if="app.relayStatus !== 'connecting' && app.relayStatus !== 'connected'">
+            · 改完重启导播生效
+          </template>
+        </p>
+        <div class="prow">
+          <input v-model="relayBase" placeholder="ws://stagedeck.example.com:8080" />
+        </div>
+        <div class="prow">
+          <input v-model="relaySid" placeholder="Session ID（如 PROM-2026）" />
+        </div>
+        <div class="prow">
+          <input v-model="relaySecret" placeholder="预共享密钥" type="password" />
+        </div>
+        <div class="prow relay-btns">
+          <button @click="saveRelay">保存</button>
+          <button @click="clearRelay" class="danger relay-clear">关闭 Relay</button>
+        </div>
       </div>
 
       <p v-if="note" class="note">{{ note }}</p>
@@ -201,5 +269,22 @@ async function savePort() {
   font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink);
+}
+.relay-status {
+  font-size: 10px;
+  margin-right: 4px;
+}
+.rs-disabled { color: var(--ink-faint); }
+.rs-connecting { color: #f0a030; }
+.rs-connected { color: #40c870; }
+.rs-error { color: var(--danger); }
+.relay-btns {
+  margin-top: 4px;
+}
+.relay-clear {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+  font-size: 10px;
 }
 </style>

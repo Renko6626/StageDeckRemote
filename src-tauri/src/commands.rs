@@ -28,6 +28,16 @@ pub struct DirectorStatus {
     pub access_url: Option<String>,
     pub timer: Option<crate::app_state::TimerView>,
     pub presenter_online: bool,
+    /// Relay 访问 URL（HTTP 形式），仅 relay 已连接时为 Some(_)。
+    pub relay_access_url: Option<String>,
+}
+
+/// Relay 配置 DTO（IPC 传输用）。
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RelayConfigDto {
+    pub base_url: String,
+    pub session_id: String,
+    pub secret: String,
 }
 
 #[tauri::command]
@@ -37,6 +47,13 @@ pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
     let access_url = local_ip
         .as_ref()
         .map(|ip| network::access_url(ip, i.server_port, &i.token));
+    // 仅当 relay 已连接时构建可供浏览器使用的 HTTP 访问地址（ws:// → http://）。
+    let relay_access_url = state.relay_config.lock().unwrap().as_ref().and_then(|c| {
+        matches!(&*state.relay_status.lock().unwrap(), crate::relay_client::RelayStatus::Connected)
+            .then(|| format!("{}/r/{}/presenter?token={}",
+                c.base_url.replace("ws://", "http://").replace("wss://", "https://"),
+                c.session_id, i.token))
+    });
     DirectorStatus {
         remote_enabled: i.remote_enabled,
         control_locked: i.control_locked,
@@ -52,6 +69,7 @@ pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
             .as_ref()
             .map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
         presenter_online: crate::app_state::controller_online(&i, crate::app_state::now_ms()),
+        relay_access_url,
     }
 }
 
@@ -336,5 +354,55 @@ pub fn set_server_port(app: tauri::AppHandle, state: State<Arc<AppState>>, port:
         log::event(&state, format!("服务端口已保存为 {port}(重启生效)"));
     } else {
         log::event(&state, format!("服务端口保存失败(端口 {port})"));
+    }
+}
+
+/// 导播 GUI:读取当前 relay 配置（无配置则返回 null）。
+#[tauri::command]
+pub fn get_relay_config(state: State<Arc<AppState>>) -> Option<RelayConfigDto> {
+    state.relay_config.lock().unwrap().as_ref().map(|c| RelayConfigDto {
+        base_url: c.base_url.clone(),
+        session_id: c.session_id.clone(),
+        secret: c.secret.clone(),
+    })
+}
+
+/// 导播 GUI:保存 relay 配置（null = 清除 relay）。改完需重启导播生效。
+#[tauri::command]
+pub fn set_relay_config(
+    app: tauri::AppHandle,
+    state: State<Arc<AppState>>,
+    cfg: Option<RelayConfigDto>,
+) {
+    // 写入 AppState（内存）。
+    *state.relay_config.lock().unwrap() = cfg.as_ref().map(|c| crate::relay_client::RelayConfig {
+        base_url: c.base_url.clone(),
+        session_id: c.session_id.clone(),
+        secret: c.secret.clone(),
+    });
+    // 持久化到 config.json。
+    if let Ok(dir) = app.path().app_config_dir() {
+        let path = dir.join("config.json");
+        let mut conf = crate::config::Config::load(&path);
+        conf.relay = cfg.map(|c| crate::config::RelayConfigPersist {
+            base_url: c.base_url,
+            session_id: c.session_id,
+            secret: c.secret,
+            enabled: true,
+        });
+        let _ = conf.save(&path);
+    }
+    // 注意：本 PR 不做 relay 客户端热重启；UI 文案已标注"重启生效"。
+    log::event(&state, "Relay 配置已更新（重启生效）");
+}
+
+/// 导播 GUI:返回当前 relay 连接状态字符串。
+#[tauri::command]
+pub fn get_relay_status(state: State<Arc<AppState>>) -> String {
+    match &*state.relay_status.lock().unwrap() {
+        crate::relay_client::RelayStatus::Disabled => "disabled".into(),
+        crate::relay_client::RelayStatus::Connecting => "connecting".into(),
+        crate::relay_client::RelayStatus::Connected => "connected".into(),
+        crate::relay_client::RelayStatus::Error(s) => format!("error: {s}"),
     }
 }
