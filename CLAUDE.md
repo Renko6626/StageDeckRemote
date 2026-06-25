@@ -16,27 +16,41 @@ StageDeck Remote — a LAN PowerPoint remote for live stage events. A **director
 
 > **This dev box is Linux with no system `webkit2gtk` and no sudo.** A bare `cargo build` / `tauri dev` / `tauri build` of the Tauri crate **fails** out of the box. Do NOT conclude "can't build here." Use the two pre-installed user-level conda envs (paths are this machine's; also documented in `~/.claude/CLAUDE.md`).
 
-**Native Linux build + Rust tests** (service layer + pure-logic; native modules compile as `#[cfg(not(windows))]` stubs):
+**Repo is a Cargo workspace** (v0.2.0+): root `Cargo.toml` with members `["src-tauri", "crates/protocol", "crates/relay"]`. Workspace `Cargo.lock` at the root is authoritative; the `src-tauri/Cargo.lock` left over from before workspace-ification is dead, kept around for `pnpm tauri build` convention but Cargo ignores it.
+
+**Native Linux build + Rust tests** (whole workspace; native modules compile as `#[cfg(not(windows))]` stubs):
 ```bash
 P=/data/sunyunbo/miniconda3/envs/tauri-dev
 PKG_CONFIG_PATH=$P/lib/pkgconfig:$P/share/pkgconfig LD_LIBRARY_PATH=$P/lib PATH=$P/bin:$PATH \
-  cargo test --manifest-path src-tauri/Cargo.toml
-# single test:  ... cargo test --manifest-path src-tauri/Cargo.toml <test_name>
+  cargo test --workspace
+# single test:  ... cargo test --workspace <test_name>
+# relay only:   ... cargo test -p relay
+# relay e2e integration test (Linux loopback, no Windows/Tauri needed):
+#                ... cargo test --workspace --test end_to_end -- --nocapture
 ```
 
-**Windows cross-compile** (the authoritative check that Win32/COM FFI compiles — no webkit2gtk needed, WebView2 target):
+**Windows cross-compile** (the authoritative check that Win32/COM FFI compiles — no webkit2gtk needed, WebView2 target). Always run from `src-tauri/` (Tauri CLI conventions):
 ```bash
 cd src-tauri && XWIN_ACCEPT_LICENSE=1 PATH=/data/sunyunbo/miniconda3/envs/xwin/bin:$PATH \
   cargo xwin build --target x86_64-pc-windows-msvc
 ```
+`relay` is **Linux-only** and is NOT cross-compiled to Windows.
 
 **Windows installer (NSIS)**:
 ```bash
 XWIN_ACCEPT_LICENSE=1 PATH=/data/sunyunbo/miniconda3/envs/xwin/bin:$PATH \
   pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis
-# output: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/StageDeck Remote_<ver>_x64-setup.exe
+# output: target/x86_64-pc-windows-msvc/release/bundle/nsis/StageDeck Remote_<ver>_x64-setup.exe
+# (workspace target/ at repo root since v0.2.0; pre-workspace builds went to src-tauri/target/)
 ```
 Bump the version before building — see **Disciplines #2**.
+
+**Linux relay binary** (for CLAB deployment; v0.2.0+):
+```bash
+cargo build --release -p relay
+# output: target/release/relay  (Linux x86_64; ~3 MB)
+```
+Both installer + relay binary should land in top-level `out/` per the user's pickup convention.
 
 **Frontend** (package manager is **pnpm**, not npm — lockfile is `pnpm-lock.yaml`):
 ```bash
@@ -60,9 +74,13 @@ pnpm typecheck  # vue-tsc only
 
 **PowerPoint control = raw IDispatch COM** (`ppt_com.rs`): connects to the running instance via `GetActiveObject("PowerPoint.Application")` (window-agnostic — independent of the captured window). `slide_state()` enumerates the *current* slide's macro-bound shapes (`Shape.ActionSettings(ppMouseClick).Action == 8 /*ppActionRunMacro*/ → .Run`). `trigger_action()` takes a **shape name**, re-reads the bound macro server-side (don't trust a client-supplied macro name), and calls `Application.Run(macro, shape)` **with a no-arg fallback** — many quiz templates share one handler `Sub Foo(shp As Shape)` across buttons and need the clicked shape passed. Page-turn/black go through `SlideShowWindows(1).View`.
 
-**Presenter UI is vanilla JS, embedded at compile time.** `src/presenter/{presenter.html,presenter.css,presenter.js}` are served by Axum via `include_str!` in `routes.rs` → **editing them requires recompiling the Rust crate**; they are NOT part of the Vite build and NOT typechecked. Layout is phone-first one-handed: a bottom transport dock (giant full-width "下一页") pinned across both modes, 2-col macro buttons, and an ARM strip; client-side gating mirrors the backend (`canAct()` ⇔ `click_allowed`).
+**Presenter UI is vanilla JS, embedded at compile time.** `src/presenter/{presenter.html,presenter.css,presenter.js,favicon.svg}` are served by Axum via `include_str!` in `routes.rs` **and** by Relay via `include_str!` in `crates/relay/src/phone_routes.rs` → **editing them requires recompiling BOTH binaries** for the change to propagate. They are NOT part of the Vite build and NOT typechecked. The HTML has `<base href="__BASE__" />` placeholder; LAN injects `/presenter/`, Relay injects `/r/<sid>/presenter/`; all JS API calls are relative (`fetch("api/status?token=...")`). Layout is phone-first one-handed: a bottom transport dock (giant full-width "下一页") pinned across both modes, 2-col macro buttons, and an ARM strip; client-side gating mirrors the backend (`canAct()` ⇔ `click_allowed`).
 
-**Director GUI** (`src/`, Vue 3 + Pinia + Vue Router): `views/DirectorView.vue` composes `components/*`; `utils/api.ts` wraps IPC; `stores/` holds state; it polls `get_status` + `get_logs` every 1.5s. The module map in `docs/architecture.md §7` is still accurate for *what each file does*.
+**Capture/stream pipeline** (v0.1.16+): WGC background session writes raw BGRA → encoder thread does sampled-hash change detection → on change, encodes JPEG q82 once and publishes to `frame_broker` (`watch::Sender<Arc<EncodedFrame>>`) → two fan-outs: presenter `GET /api/stream.mjpg` (multipart) and director `subscribe_preview` IPC (Tauri `Channel<tauri::ipc::Response>` → canvas). Static slides → ≈ zero idle CPU. `snapshot.jpg` + `get_snapshot` IPC kept as one-shot fallbacks. See `docs/adr/0006-capture-stream-broker.md`.
+
+**Relay architecture** (v0.2.0+): the same `Arc<axum::Router>` is reused two ways. LAN path: `web_server::run_with_router` binds `0.0.0.0:8787`. Relay path: `relay_client::spawn` opens two outbound WS to a CLAB-hosted `relay` binary, control WS receives `TunnelReq` from relay and feeds the router via `tower::ServiceExt::oneshot`, stream WS subscribes to broker and pushes JPEG bytes upward. **routes.rs business logic is unchanged**. Relay re-fans the stream as `multipart/x-mixed-replace` to phones; phones never know the difference. See `docs/adr/0007-relay-hybrid-tunnel.md`.
+
+**Director GUI** (`src/`, Vue 3 + Pinia + Vue Router): `views/DirectorView.vue` composes `components/*`; `utils/api.ts` wraps IPC; `stores/` holds state; it polls `get_status` + `get_logs` every 1.5s. **Preview frames are NOT in that poll** — they come via `subscribe_preview` Tauri Channel push and render to canvas. The module map in `docs/architecture.md §7` is the authoritative source for *what each file does*.
 
 ## Platform pattern & gotchas
 
@@ -76,6 +94,11 @@ pnpm typecheck  # vue-tsc only
 - **No one-shot generation.** Every change goes brainstorm → spec → plan → implement → review, in small auditable commits. Specs live in `docs/superpowers/specs/YYYY-MM-DD-*.md`, plans in `docs/superpowers/plans/`. Use the `superpowers` skills (brainstorming → writing-plans → subagent-driven-development) and the dated specs/plans as the source of truth for recent behavior.
 - Per-feature branch off `master`, then local merge (no PR unless asked).
 
-## Doc staleness
+## Doc currency
 
-`README.md` and `docs/architecture.md` were written at the MVP-scaffold stage and are **partly outdated**: capture/input/window-enumeration, the PowerPoint COM toolchain, and the offline QR code are now **implemented** (no longer "TODO(windows)/占位"); and the lock model changed — `control_locked` now defaults **false** (emergency-only), and **all** presenter actions require `click_allowed` (architecture.md §5/§4.3 still say only preview-clicks need unlock and that force-lock defaults on). When in doubt, trust the code and the newest `docs/superpowers/specs/*`.
+As of v0.2.0 + the 2026-06-26 doc refresh, the long-form docs are caught up to current code:
+
+- `README.md`, `docs/architecture.md`, `docs/protocol.md`, `docs/network.md` cover both LAN and Relay modes, the change-driven capture pipeline, and the workspace structure.
+- ADRs include the two new architectural decisions: `docs/adr/0006-capture-stream-broker.md` (capture/stream rework, supersedes 0005) and `docs/adr/0007-relay-hybrid-tunnel.md` (relay).
+- `docs/superpowers/specs/*` and `docs/superpowers/plans/*` remain the brainstorm→spec→plan→implement record per dated sub-project; they are NOT edited after landing — they're history.
+- When in doubt, trust the code first, then the newest spec under `docs/superpowers/specs/`, then the long-form docs.
