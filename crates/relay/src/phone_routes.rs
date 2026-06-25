@@ -2,7 +2,7 @@ use crate::session::Session;
 use crate::AppCtx;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::Router;
@@ -13,6 +13,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio_stream::StreamExt as _;
 
 pub fn router() -> Router<Arc<AppCtx>> {
     Router::new()
@@ -30,6 +31,7 @@ pub fn router() -> Router<Arc<AppCtx>> {
         .route("/r/:sid/api/lock", any(tunnel_post))
         .route("/r/:sid/api/unlock", any(tunnel_post))
         .route("/r/:sid/api/message", any(tunnel_post))
+        .route("/r/:sid/api/stream.mjpg", get(stream_mjpeg))
 }
 
 async fn tunnel_get(
@@ -141,6 +143,34 @@ async fn tunnel(
     resp
 }
 
+async fn stream_mjpeg(
+    State(ctx): State<Arc<AppCtx>>,
+    Path(sid): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(sess) = ctx.sessions.get(&sid).await else {
+        return (StatusCode::BAD_GATEWAY, "session_unavailable").into_response();
+    };
+    let supplied = q.get("token").map(|s| s.as_str()).unwrap_or("");
+    let expected = sess.token.lock().await.clone();
+    if expected.is_empty() || supplied != expected {
+        return (StatusCode::UNAUTHORIZED, "invalid_token").into_response();
+    }
+    let rx = sess.frame_tx.subscribe();
+    let body = tokio_stream::wrappers::WatchStream::new(rx).filter_map(|frame| {
+        if frame.is_empty() {
+            None
+        } else {
+            Some(Ok::<Vec<u8>, std::io::Error>(protocol::mjpeg_part(&frame)))
+        }
+    });
+    Response::builder()
+        .header(header::CONTENT_TYPE, "multipart/x-mixed-replace; boundary=frame")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(body))
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +263,39 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         assert_eq!(&body[..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn stream_emits_multipart_after_frame_pushed() {
+        let ctx = Arc::new(AppCtx {
+            sessions: crate::session::SessionTable::new(),
+            config: crate::config::Config {
+                listen: "0.0.0.0:0".parse().unwrap(),
+                session_grace_secs: 60,
+                tunnel_timeout_secs: 5,
+            },
+        });
+        let (sess, _rx) = mk_session();
+        // send_replace succeeds even with no active receivers; the sent value
+        // becomes the watch's current value and WatchStream emits it on first poll.
+        sess.frame_tx.send_replace(Arc::new(vec![0xAA, 0xBB, 0xCC]));
+        ctx.sessions.0.write().await.insert("SID-1234".into(), sess);
+        let mut q = HashMap::new();
+        q.insert("token".into(), "TOK".into());
+        let resp = stream_mjpeg(State(ctx), Path("SID-1234".into()), Query(q)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+        assert!(ct.starts_with("multipart/x-mixed-replace"));
+        // take first chunk and verify boundary + payload size header
+        let body = resp.into_body();
+        let mut stream = http_body_util::BodyExt::into_data_stream(body);
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8_lossy(&chunk);
+        assert!(text.contains("--frame"));
+        assert!(text.contains("Content-Length: 3"));
     }
 }
