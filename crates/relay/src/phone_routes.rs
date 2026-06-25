@@ -15,6 +15,11 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt as _;
 
+const PRESENTER_HTML: &str = include_str!("../../../src/presenter/presenter.html");
+const PRESENTER_CSS: &str = include_str!("../../../src/presenter/presenter.css");
+const PRESENTER_JS: &str = include_str!("../../../src/presenter/presenter.js");
+const PRESENTER_FAVICON: &str = include_str!("../../../src/presenter/favicon.svg");
+
 pub fn router() -> Router<Arc<AppCtx>> {
     Router::new()
         // 隧道:除 stream.mjpg 外的 /api/* 全转发
@@ -32,6 +37,29 @@ pub fn router() -> Router<Arc<AppCtx>> {
         .route("/r/:sid/api/unlock", any(tunnel_post))
         .route("/r/:sid/api/message", any(tunnel_post))
         .route("/r/:sid/api/stream.mjpg", get(stream_mjpeg))
+        // Presenter 静态资源 + <base href> 注入
+        .route("/r/:sid/presenter", get(presenter_html))
+        .route("/r/:sid/presenter/presenter.css", get(presenter_css))
+        .route("/r/:sid/presenter/presenter.js", get(presenter_js))
+        .route("/r/:sid/presenter/favicon.svg", get(presenter_favicon))
+}
+
+async fn presenter_html(Path(sid): Path<String>) -> Response {
+    let base = format!("/r/{}/presenter/", sid);
+    let html = PRESENTER_HTML.replace("__BASE__", &base);
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+}
+
+async fn presenter_css() -> Response {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], PRESENTER_CSS).into_response()
+}
+
+async fn presenter_js() -> Response {
+    ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], PRESENTER_JS).into_response()
+}
+
+async fn presenter_favicon() -> Response {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], PRESENTER_FAVICON).into_response()
 }
 
 async fn tunnel_get(
@@ -297,5 +325,16 @@ mod tests {
         let text = String::from_utf8_lossy(&chunk);
         assert!(text.contains("--frame"));
         assert!(text.contains("Content-Length: 3"));
+    }
+
+    #[tokio::test]
+    #[ignore] // enabled by Task 6 once __BASE__ placeholder is added to presenter.html
+    async fn presenter_html_injects_base_href() {
+        let resp = presenter_html(Path("PROM-2026".into())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains(r#"<base href="/r/PROM-2026/presenter/""#));
+        assert!(!text.contains("__BASE__"));
     }
 }
