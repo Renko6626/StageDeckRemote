@@ -4,8 +4,10 @@
 > [`project.md`](project.md)，本文不重复需求，只在必要处引用其章节（如 §11）。
 > 决策的"为什么"沉淀在 [`adr/`](adr/) 下的决策记录中。
 >
-> 状态：核心闭环已实现。原生截图/输入/窗口枚举 + PowerPoint COM 控制均为 `#[cfg(windows)]`
-> 真实分支（非 Windows 为占位 stub）；源码已无 `TODO(windows)` 标记。
+> 状态：核心闭环已实现并演进至 v0.2.0。原生截图/输入/窗口枚举 + PowerPoint COM 控制均为
+> `#[cfg(windows)]` 真实分支（非 Windows 为占位 stub），源码已无 `TODO(windows)` 标记。
+> 截图链路在 v0.1.16 从 HTTP 轮询升级为"变化驱动 + 单点编码 + MJPEG/Channel 推送"（§4.1）；
+> v0.2.0 引入 CLAB Relay 作为 LAN 之外的可选传输路径（§11）。
 
 ---
 
@@ -88,25 +90,44 @@ StageDeck Remote 让主持人通过**手机/平板浏览器**看到导播电脑�
 
 ## 4. 运行时数据流
 
-### 4.1 截图推送（MVP：HTTP 轮询）
+### 4.1 截图推送（变化驱动 + 单点编码 + 双向推送）
+
+WGC 后台会话把原始 BGRA 帧写入共享缓冲；编码线程对原始缓冲做**采样 hash** 检测变化，
+**变化才编码一次**（JPEG q82）并 publish 到 `frame_broker`（`tokio::sync::watch` 扇出）。
+两条消费链路各自订阅 broker，不重复编码：
 
 ```mermaid
 sequenceDiagram
-    participant P as 主持人浏览器(presenter.js)
-    participant A as Axum(routes.rs)
-    participant C as capture.rs
-    loop 链式刷新(上一帧 load 后 ≥300ms)
-        P->>A: GET /api/snapshot.jpg?token=
-        A->>A: token 校验
-        A->>C: snapshot_jpeg(state,1280,720,70)
-        C-->>A: JPEG 字节(选中窗口/占位图)
-        A-->>P: 200 image/jpeg
-        P->>P: <img> onload → 排下一帧
+    participant W as WGC 会话(capture_session.rs)
+    participant E as 编码线程(capture.rs)
+    participant B as frame_broker (watch::Sender)
+    participant R as Axum(routes::stream_mjpeg)
+    participant D as commands::subscribe_preview (IPC Channel)
+    participant P as 主持人 <img src=/api/stream.mjpg>
+    participant G as 导播 DirectorPreview.vue (canvas)
+
+    W->>E: 新帧 BGRA (notify)
+    E->>E: sample_hash 比对
+    alt 帧变化
+      E->>E: BGRA→RGB→缩放→JPEG q82
+      E->>B: publish(EncodedFrame)
+      par 主持人 MJPEG
+        B-->>R: rx.changed()
+        R-->>P: multipart 段 (--frame ... <jpg>)
+      and 导播 Tauri Channel
+        B-->>D: rx.changed()
+        D-->>G: ArrayBuffer → createImageBitmap → drawImage(canvas)
+      end
     end
 ```
 
-MVP 用轮询；后续可升级 WebSocket/MJPEG（见 [`project.md`](project.md) §9.3）。
-前端用**链式刷新**而非定时器，避免慢链路下请求堆积。
+- **主持人端**：单根长连 `GET /api/stream.mjpg`（`multipart/x-mixed-replace`），浏览器原生换帧、空闲零流量。
+  `snapshot.jpg` 保留为一次性兜底。
+- **导播端**：`subscribe_preview` IPC 用 Tauri `Channel<tauri::ipc::Response>` 推**原始 JPEG 字节**到 webview，
+  绕开 webview 拉环回 HTTP 的 PNA 阻断；前端 `createImageBitmap` → `<canvas>` 双缓冲。`get_snapshot` IPC 保留为兜底。
+- WGC 不可用退 BitBlt 定时抓取兜底；空闲时（无帧或采样 hash 一致）**≈零 CPU**。
+- 完整设计见 [ADR-0006](adr/0006-capture-stream-broker.md) 与 spec
+  [`superpowers/specs/2026-06-16-capture-stream-optimization-design.md`](superpowers/specs/2026-06-16-capture-stream-optimization-design.md)。
 
 ### 4.2 远程点击（归一化坐标 → 屏幕点击）
 
@@ -147,7 +168,8 @@ sequenceDiagram
 ### 4.4 导播端（IPC）
 
 导播 GUI 每 1.5s 调 `get_status` + `get_logs` 轮询刷新；操作（开关远程/强制锁/选窗）
-调对应 command 后立即再刷新一次。导播操作不经网络。
+调对应 command 后立即再刷新一次。**预览帧不在这条轮询里**——由 `subscribe_preview` 经 Tauri Channel
+由 broker 在变化时推送（§4.1）。导播操作不经网络。
 
 ---
 
@@ -210,12 +232,14 @@ screen_y = top  + round(y * height)
 | `routes.rs` | 主持人**受限 HTTP API**（§9 全端点） | HTTP |
 | `auth.rs` | token 生成 / 校验 | 共享 |
 | `window_manager.rs` | EnumWindows 枚举/识别/矩形/置前 | `#[cfg(windows)]` |
-| `capture.rs` | 窗口截图 → JPEG（WGC 最新帧 / GDI BitBlt 回退 / 未选窗占位图） | `#[cfg(windows)]` |
-| `capture_session.rs` | WGC 后台捕获会话（写最新帧缓冲） | `#[cfg(windows)]` |
+| `capture.rs` | WGC/BitBlt 帧来源 + 单点编码线程喂 broker；`snapshot_jpeg` 保留作一次性兜底 | `#[cfg(windows)]` 真分支 |
+| `capture_session.rs` | WGC 后台捕获会话（写原始 BGRA 缓冲 + 通知编码线程） | `#[cfg(windows)]` |
+| `frame_broker.rs` | `watch` 扇出已编码帧；`sample_hash` 变化检测；`mjpeg_part` 公共分帧 | 共享 |
 | `input.rs` | SendInput 模拟鼠标/键盘 | `#[cfg(windows)]` |
 | `ppt_com.rs` | PowerPoint COM 控制：翻页 / 黑屏-恢复 / 取放映态 / 运行宏 | `#[cfg(windows)]` |
+| `relay_client.rs` | Relay 模式下的 WS 控制隧道 + WS 推流 + 重连 + token push（§11） | 共享 |
 | `network.rs` | 局域网 IP 发现、访问 URL | 共享 |
-| `config.rs` | 配置持久化（端口等） | 共享 |
+| `config.rs` | 配置持久化（端口、Relay 配置） | 共享 |
 | `presets.rs` | 预制快捷消息默认种子 + 持久化 | 共享 |
 | `log.rs` | 事件日志（内存环形 + stdout） | 共享 |
 
@@ -251,7 +275,7 @@ screen_y = top  + round(y * height)
 
 ---
 
-## 10. 实现状态与待办
+## 10. 实现状态
 
 | 项 | 现状 |
 | --- | --- |
@@ -261,15 +285,67 @@ screen_y = top  + round(y * height)
 | 黑屏/恢复 | ✅ 已实现（PowerPoint COM `set_black`；原 OBS 方案已废弃） |
 | 二维码 | ✅ 已实现（离线 `qrcode` 库本地渲染：`utils/qrcode.ts` + `QrCodePanel.vue`） |
 | 单控制端独占 | ✅ 已实现（`note_presence_and_claim`：先到为主、控制端离线可被接管） |
-| 截图传输 | HTTP 轮询；待办 P1+：WebSocket/MJPEG |
+| 截图传输 | ✅ 已实现（v0.1.16：变化驱动 + 单点编码 + MJPEG 推流；`snapshot.jpg` 保留兜底；§4.1） |
+| Relay 传输路径 | ✅ 已实现（v0.2.0：CLAB 中继 + HTTP 隧道 + 二进制 WS 推流；LAN 仍并存；§11） |
+| Relay session 宽限期回收 | 字段就位但后台清理任务未启用（已知 v1 限制；spec §13） |
 
 PowerPoint 控制走**独立的 COM 通道**（`ppt_com.rs` 经 `GetActiveObject` 连到运行中的实例，
 与被截窗口无关），不依赖前述 `input` 的窗口注入即可翻页/黑屏/运行宏；`input` 仅作 COM 失败时的回退。
 
 ---
 
+## 11. Relay 模式（可选传输路径）
+
+LAN 直连之外，可经一台**校园网内中继服务器**（部署在 PKU CLAB 等）让导播 PC 与主持人手机分别独立连上去——
+为对付场馆 WiFi 的客户端隔离 / 对等阻断而设。**LAN 模式同时保留**；走哪条由二维码 URL 决定（手机无模式感知，
+仍是相同的 HTML/JS 协议）。
+
+```
+[导播 Tauri / Windows]            [Relay / 校内 Linux]              [手机浏览器]
+ - LAN Axum :8787 (留)             - Rust binary (axum 0.7)            扫码即用
+ - relay_client.rs (新)     ──持久 WS 控制隧道──▶                    ──HTTP──▶
+ - frame_broker (watch)     ──持久 WS 推流通道──▶                    ──MJPEG─▶
+                                   - 会话表 + 隧道分发
+                                   - watch 复刻一份扇出
+```
+
+**双平面**（详见 [ADR-0007](adr/0007-relay-hybrid-tunnel.md)）：
+
+- **控制平面 = HTTP 隧道**：手机 `POST /r/<sid>/api/next?token=...` → relay 边缘校 token → 经常驻 WS 把
+  `TunnelReq{req_id, method, path, headers, body_b64}` 推给导播；导播 `relay_client` 反序列化为
+  `axum::http::Request`，**喂给现有 `routes::router()`**（`tower::ServiceExt::oneshot`）拿响应，原路回送。
+  **`routes.rs` 业务零改动**；token/锁/cid/控制权判定仍在 director 内部。
+- **推流平面 = 二进制 WS**：导播 `broker.subscribe()` 拿 `EncodedFrame.jpeg` 当 WS 二进制帧上送 relay；
+  relay 复刻一份 `watch::Sender<Arc<Vec<u8>>>` 扇出给所有连本会话的手机，对手机吐 `/r/<sid>/api/stream.mjpg`——
+  **手机端协议完全不变**（仍是 `<img src=...>`）。
+- **会话**：导播 `ClientHello { session_id, token, secret, version }` 注册；session_id 短码 `[A-Z0-9-]{4,16}`；
+  secret 防撞名。token 轮换 → 导播侧 push `TokenUpdate` 给 relay 更新缓存。
+- **配置**：Settings 模态填 base_url / session_id / secret；改完**重启导播**生效。`QrCodePanel` 加 LAN/Relay 切换 toggle。
+- **部署**：relay 是独立 Linux 二进制（`cargo build --release -p relay`），CLAB 上 systemd 跑，
+  默认监听 `0.0.0.0:8080`。presenter 静态资源用 `include_str!` **编进 relay 二进制**——
+  CLAB 不需要额外放前端文件；改 `src/presenter/*` 要同时重编**导播与 relay 两个二进制**。
+
+### 11.1 Cargo workspace 结构
+
+为共享 wire schema 引入 workspace：
+
+```
+StageDeckRemote/
+├── Cargo.toml                  workspace 根
+├── src-tauri/                  导播 Tauri 应用（+ 新增 relay_client.rs）
+├── crates/
+│   ├── protocol/               共享 wire types (ControlMessage, mjpeg_part)
+│   └── relay/                  relay binary（lib + bin split：tests/ 能访问内部）
+```
+
+`relay` 是 lib+bin 双 target，便于集成测试 (`crates/relay/tests/end_to_end.rs`) 在 Linux loopback 上端到端跑通——
+**不依赖 Windows / Tauri**，CI 可直接验。详见 spec
+[`superpowers/specs/2026-06-25-relay-architecture-design.md`](superpowers/specs/2026-06-25-relay-architecture-design.md)。
+
+---
+
 ## 关联文档
 
 - 需求与产品范围：[`project.md`](project.md)
-- 决策记录：[`adr/`](adr/)
+- 决策记录：[`adr/`](adr/)（含 ADR-0006 推流改造、ADR-0007 Relay）
 - 网络部署：[`network.md`](network.md) ｜ 协议：[`protocol.md`](protocol.md) ｜ 彩排：[`rehearsal-checklist.md`](rehearsal-checklist.md)
