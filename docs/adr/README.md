@@ -11,4 +11,6 @@
 | [0002](0002-ipc-http-trust-boundary.md) | 导播走 IPC、主持人走 HTTP 的信任边界 | Accepted |
 | [0003](0003-presenter-vanilla-js.md) | 主持人页用原生 JS、由 Axum 直接 serve | Accepted |
 | [0004](0004-cfg-windows-native.md) | 原生能力 `#[cfg(windows)]` + 跨平台占位 | Accepted |
-| [0005](0005-mvp-snapshot-polling.md) | MVP 截图用 HTTP 轮询 + 占位图先打通链路 | Accepted |
+| [0005](0005-mvp-snapshot-polling.md) | MVP 截图用 HTTP 轮询 + 占位图先打通链路 | **Superseded by 0006** |
+| [0006](0006-capture-stream-broker.md) | 截图/推流改"变化驱动 + 单点编码 + 推送"(MJPEG + Tauri Channel) | Accepted |
+| [0007](0007-relay-hybrid-tunnel.md) | Relay 架构——混合 HTTP 隧道 + 二进制 WS 推流 + 双模并存 | Accepted |

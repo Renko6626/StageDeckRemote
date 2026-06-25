@@ -1,7 +1,16 @@
 # ADR-0005：MVP 截图用 HTTP 轮询 + 占位图先打通链路
 
-- 状态：Accepted（2026-06-14）
+- 状态：**Superseded by [ADR-0006](0006-capture-stream-broker.md)（2026-06-16）**
+- 历史状态：Accepted（2026-06-14）
 - 相关：[architecture.md §4.1/§10](../architecture.md)、[project.md §9.3/§15](../project.md)
+
+> ⚠️ **取代说明**：本决策在 MVP 期成立——用最低复杂度的 HTTP 轮询 + 占位图先把端到端链路跑通。
+> 真实截图（WGC/BitBlt）落地之后，2026-06-16 的截图/推流优化把传输路径换成
+> "变化驱动 + 单点编码 + MJPEG/Tauri Channel 推送"，见 ADR-0006。`snapshot.jpg` 仍以**兜底**形式
+> 保留在 `routes.rs` 与 `commands::get_snapshot` 里。本文以下内容保留为历史决策记录。
+
+---
+
 
 ## 背景
 
