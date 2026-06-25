@@ -50,6 +50,23 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/action", post(action))
         .route("/api/messages", get(messages))
         .route("/api/message", post(message))
+        // /presenter/api/* aliases — same handlers, different prefix.
+        // presenter.html sets <base href="/presenter/"> so relative "api/foo"
+        // resolves to "/presenter/api/foo"; old /api/* routes kept for back-compat.
+        .route("/presenter/api/status", get(status))
+        .route("/presenter/api/slide_state", get(slide_state))
+        .route("/presenter/api/snapshot.jpg", get(snapshot))
+        .route("/presenter/api/stream.mjpg", get(stream_mjpeg))
+        .route("/presenter/api/messages", get(messages))
+        .route("/presenter/api/next", post(next))
+        .route("/presenter/api/prev", post(prev))
+        .route("/presenter/api/black", post(black))
+        .route("/presenter/api/restore", post(restore))
+        .route("/presenter/api/action", post(action))
+        .route("/presenter/api/click", post(click))
+        .route("/presenter/api/lock", post(lock))
+        .route("/presenter/api/unlock", post(unlock))
+        .route("/presenter/api/message", post(message))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
@@ -108,7 +125,7 @@ async fn presenter_page(
     if !token_ok(&state, &q.token) {
         return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
     }
-    Html(PRESENTER_HTML).into_response()
+    Html(PRESENTER_HTML.replace("__BASE__", "/presenter/")).into_response()
 }
 
 async fn presenter_css() -> Response {

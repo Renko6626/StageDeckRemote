@@ -328,7 +328,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // enabled by Task 6 once __BASE__ placeholder is added to presenter.html
     async fn presenter_html_injects_base_href() {
         let resp = presenter_html(Path("PROM-2026".into())).await;
         assert_eq!(resp.status(), StatusCode::OK);
