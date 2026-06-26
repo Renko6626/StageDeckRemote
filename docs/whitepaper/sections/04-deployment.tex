@@ -48,12 +48,7 @@
 
 \textbf{怎么工作。} 导播工作机主动开两条出站 WebSocket 到 Relay:控制隧道 + 二进制推流隧道。Relay 在公网开 80/8080,把主持人的 HTTP 请求经控制隧道反向打到导播机,把推流转写成普通 MJPEG 流给主持人浏览器。\textbf{业务路由代码两边完全一样} —— 导播侧的 \texttt{axum::Router} 被 Relay 通过 \texttt{tower::ServiceExt::oneshot} 当成 Service 调一次,响应再原路返回。主持人 URL 只是从 LAN 的 \texttt{:8787/presenter} 变成 Relay 的 \texttt{/r/<sid>/presenter},一行业务代码不用改。
 
-\textbf{适用边界}:
-
-\begin{itemize}
-  \item \textbf{适合}:校园内多栋楼跨网段、彩排时主持人不在现场提前演练、合作社团之间远程协调。
-  \item \textbf{暂不建议}:对外公开演出(白皮书撰写时 Relay 仅在校园内验证;TLS、限速、抗 DDoS 还在路线图上)。
-\end{itemize}
+\textbf{什么时候用、什么时候别用}:校园内跨楼、彩排时主持人不在现场提前演练、合作社团之间远程协调,这些场合 Relay 都合适。但对外公开演出暂时别走 Relay —— 写白皮书的时候,TLS、限速、抗 DDoS 这套都还在路线图上,Relay 仅在校园网内验证过。
 
 设计上详见 ADR-0007(\texttt{docs/adr/0007-relay-hybrid-tunnel.md})。
 
@@ -73,4 +68,4 @@
 \end{tabularx}
 \end{center}
 
-实际部署建议:**LAN 为主、Relay 为兜底**,导播 GUI 里 Relay 配置常驻,关键演出当天保持 Relay 状态绿灯,真出问题 30 秒切。
+怎么搭配?LAN 为主,Relay 当兜底。导播 GUI 里把 Relay 配置常驻着,关键演出当天保持 Relay 状态绿灯;真到 LAN 抽风的时刻,切二维码就完事,30 秒内。
