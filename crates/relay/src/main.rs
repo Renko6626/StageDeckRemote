@@ -1,6 +1,8 @@
 use relay::session::SessionTable;
 use relay::{build_router, config, AppCtx};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::time::MissedTickBehavior;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[tokio::main]
@@ -25,9 +27,31 @@ async fn main() {
         "relay starting"
     );
 
+    spawn_session_reaper(ctx.clone());
+
     let app = build_router(ctx);
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// 周期性扫表:控制 WS 已掉线 + last_seen 超过 grace 的 session 摘掉。
+/// 不掉 = 现在,改的就是 spec §13 的宽限期机制(代码里有 last_seen / drop_session,缺一个 tick)。
+fn spawn_session_reaper(ctx: Arc<AppCtx>) {
+    let grace = Duration::from_secs(ctx.config.session_grace_secs);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(10));
+        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // 头一次 tick 立刻返回,跳过它以免启动瞬间就扫
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            let expired = ctx.sessions.collect_expired(grace, Instant::now()).await;
+            for sid in expired {
+                tracing::info!(sid = %sid, "reaping expired session (control gone past grace)");
+                ctx.sessions.drop_session(&sid).await;
+            }
+        }
+    });
 }
 
 // 默认走 compact 文本(人眼读);设 STAGEDECK_RELAY_LOG=json → JSON 行(给日志聚合)。

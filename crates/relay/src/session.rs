@@ -86,6 +86,28 @@ impl SessionTable {
             tracing::info!(sid = %sid, "session dropped");
         }
     }
+
+    /// 把"控制 WS 已挂掉 + last_seen 超过 grace"的 sid 摘出来给 reaper。
+    /// 不真删,调用方拿这个列表挨个 drop_session(),避免与活跃 WS 拿同把锁打架。
+    pub async fn collect_expired(
+        &self,
+        grace: std::time::Duration,
+        now: Instant,
+    ) -> Vec<SessionId> {
+        let tbl = self.0.read().await;
+        let mut out = Vec::new();
+        for (sid, sess) in tbl.iter() {
+            // 检查控制 WS 是否还连着;writer 任务掉 rx → tx.is_closed() = true
+            if !sess.control_tx.lock().await.is_closed() {
+                continue;
+            }
+            let last_seen = *sess.last_seen.lock().await;
+            if now.saturating_duration_since(last_seen) > grace {
+                out.push(sid.clone());
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -122,5 +144,38 @@ mod tests {
             tbl.register_or_attach("PROM-2026".into(), "WRONG".into(), "t".into(), dummy_tx())
                 .await;
         assert_eq!(err.err(), Some("secret_mismatch"));
+    }
+
+    #[tokio::test]
+    async fn collect_expired_picks_stale_disconnected_sessions() {
+        let tbl = SessionTable::new();
+
+        // 1) dummy_tx: rx 立刻被 drop → tx.is_closed() = true(=控制 WS 已掉线)
+        let sess_stale = tbl
+            .register_or_attach("STALE".into(), "s".into(), "t".into(), dummy_tx())
+            .await
+            .unwrap();
+        // 把 last_seen 倒拨 100 秒,模拟"掉线很久了"
+        *sess_stale.last_seen.lock().await =
+            Instant::now().checked_sub(std::time::Duration::from_secs(100)).unwrap();
+
+        // 2) 同样掉线但 last_seen 是刚刚 → 还在宽限期内,不该被摘
+        tbl.register_or_attach("FRESH-DEAD".into(), "s".into(), "t".into(), dummy_tx())
+            .await
+            .unwrap();
+
+        // 3) 控制 WS 还活着 → 不该被摘,即使 last_seen 已老
+        let (live_tx, _live_rx) = mpsc::unbounded_channel::<ControlMessage>();
+        let sess_live = tbl
+            .register_or_attach("LIVE".into(), "s".into(), "t".into(), live_tx)
+            .await
+            .unwrap();
+        *sess_live.last_seen.lock().await =
+            Instant::now().checked_sub(std::time::Duration::from_secs(999)).unwrap();
+        // _live_rx 一直被持有 → tx.is_closed() = false
+
+        let expired =
+            tbl.collect_expired(std::time::Duration::from_secs(60), Instant::now()).await;
+        assert_eq!(expired, vec!["STALE".to_string()]);
     }
 }
