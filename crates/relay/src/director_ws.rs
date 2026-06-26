@@ -41,12 +41,14 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
             (session_id, token, secret)
         }
         _ => {
+            tracing::warn!("control ws closed: missing or malformed ClientHello");
             let _ = socket.send(Message::Close(None)).await;
             return;
         }
     };
     // 2. Validate session_id format.
     if !valid_sid(&sid) {
+        tracing::warn!(sid = %sid, "control ws rejected: bad_sid");
         let _ = send_json(
             &mut socket,
             &ControlMessage::ServerHello { ok: false, reason: Some("bad_sid".into()) },
@@ -59,6 +61,7 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     let sess = match ctx.sessions.register_or_attach(sid.clone(), secret, token, tx).await {
         Ok(s) => s,
         Err(e) => {
+            tracing::warn!(sid = %sid, reason = %e, "control ws rejected by session table");
             let _ = send_json(
                 &mut socket,
                 &ControlMessage::ServerHello { ok: false, reason: Some(e.into()) },
@@ -96,6 +99,7 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     }
     // 6. Director disconnected; update last_seen and let the grace-period cleaner handle teardown.
     *sess.last_seen.lock().await = Instant::now();
+    tracing::info!(sid = %sid, "control ws disconnected");
     writer.abort();
 }
 
@@ -129,6 +133,7 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     let (sid, secret) = match hello {
         Some(ControlMessage::ClientHello { session_id, secret, .. }) => (session_id, secret),
         _ => {
+            tracing::warn!("stream ws closed: missing or malformed ClientHello");
             let _ = socket.send(Message::Close(None)).await;
             return;
         }
@@ -136,6 +141,7 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     let sess = match ctx.sessions.get(&sid).await {
         Some(s) if s.secret == secret => s,
         _ => {
+            tracing::warn!(sid = %sid, "stream ws rejected: unknown sid or secret mismatch");
             let _ = socket.send(Message::Close(None)).await;
             return;
         }
@@ -143,6 +149,7 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     let _ = send_json(&mut socket, &ControlMessage::ServerHello { ok: true, reason: None }).await;
     // Mark stream connected for admin status; clear when this loop exits.
     sess.stream_connected.store(true, std::sync::atomic::Ordering::SeqCst);
+    tracing::info!(sid = %sid, "stream ws connected");
     // Receive binary frames and broadcast via watch channel.
     while let Some(Ok(msg)) = socket.next().await {
         match msg {
@@ -156,6 +163,11 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
         }
     }
     sess.stream_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+    tracing::info!(
+        sid = %sid,
+        total_frames = sess.frames_pushed.load(std::sync::atomic::Ordering::Relaxed),
+        "stream ws disconnected"
+    );
 }
 
 async fn send_json(socket: &mut WebSocket, msg: &ControlMessage) -> Result<(), axum::Error> {

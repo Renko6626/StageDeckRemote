@@ -51,12 +51,14 @@ impl SessionTable {
         let mut tbl = self.0.write().await;
         if let Some(existing) = tbl.get(&sid).cloned() {
             if existing.secret != secret {
+                tracing::warn!(sid = %sid, "session register rejected: secret_mismatch");
                 return Err("secret_mismatch");
             }
             // Same secret reconnect: replace control_tx + update token + refresh last_seen.
             *existing.control_tx.lock().await = control_tx;
             *existing.token.lock().await = token;
             *existing.last_seen.lock().await = Instant::now();
+            tracing::info!(sid = %sid, "session reattached");
             return Ok(existing);
         }
         let (frame_tx, _) = watch::channel(Arc::new(Vec::new()));
@@ -74,12 +76,15 @@ impl SessionTable {
             frame_last_at: Mutex::new(None),
             stream_connected: AtomicBool::new(false),
         });
+        tracing::info!(sid = %sid, "session registered");
         tbl.insert(sid, sess.clone());
         Ok(sess)
     }
 
     pub async fn drop_session(&self, sid: &str) {
-        self.0.write().await.remove(sid);
+        if self.0.write().await.remove(sid).is_some() {
+            tracing::info!(sid = %sid, "session dropped");
+        }
     }
 }
 

@@ -116,16 +116,19 @@ async fn tunnel(
 ) -> Response {
     // 1. 找 session
     let Some(sess) = ctx.sessions.get(&sid).await else {
+        tracing::warn!(sid = %sid, path = %uri.path(), "tunnel: session_unavailable");
         return (StatusCode::BAD_GATEWAY, "session_unavailable").into_response();
     };
     // 2. 边缘 token 校验(从 query 拿)
     let supplied = query_map.get("token").map(|s| s.as_str()).unwrap_or("");
     let expected = sess.token.lock().await.clone();
     if expected.is_empty() || supplied != expected {
+        tracing::warn!(sid = %sid, path = %uri.path(), "tunnel: invalid_token");
         return (StatusCode::UNAUTHORIZED, "invalid_token").into_response();
     }
     // 3. body 大小 64 KiB 上限
     if body.len() > 64 * 1024 {
+        tracing::warn!(sid = %sid, bytes = body.len(), "tunnel: body_too_large");
         return (StatusCode::PAYLOAD_TOO_LARGE, "body_too_large").into_response();
     }
     // 4. 构造 TunnelReq
@@ -162,6 +165,7 @@ async fn tunnel(
     let send_res = sess.control_tx.lock().await.send(req);
     if send_res.is_err() {
         sess.pending.lock().await.remove(&req_id);
+        tracing::warn!(sid = %sid, req_id, "tunnel: director_offline (control channel closed)");
         return (StatusCode::BAD_GATEWAY, "director_offline").into_response();
     }
     // 7. 等响应(超时)
@@ -182,9 +186,19 @@ async fn tunnel(
                 .body(Body::from(bytes))
                 .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "bad_resp").into_response())
         }
-        Ok(_) => (StatusCode::BAD_GATEWAY, "bad_tunnel_resp").into_response(),
+        Ok(_) => {
+            tracing::warn!(sid = %sid, req_id, "tunnel: bad_tunnel_resp");
+            (StatusCode::BAD_GATEWAY, "bad_tunnel_resp").into_response()
+        }
         Err(_) => {
             sess.pending.lock().await.remove(&req_id);
+            tracing::warn!(
+                sid = %sid,
+                req_id,
+                timeout_secs = ctx.config.tunnel_timeout_secs,
+                path = %uri.path(),
+                "tunnel: tunnel_timeout"
+            );
             (StatusCode::GATEWAY_TIMEOUT, "tunnel_timeout").into_response()
         }
     };
