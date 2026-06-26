@@ -83,7 +83,7 @@ async fn control_loop(state: Arc<AppState>, router: Arc<axum::Router>, cfg: Rela
                 }
             }
         });
-        *state.relay_status.lock().unwrap() = RelayStatus::Connected;
+        // 状态仍是 Connecting,等到 ServerHello{ok:true} 才置 Connected,避免半 RTT 的假绿。
         // 读者:收 ServerHello / TunnelReq → router.call → 推 TunnelResp
         while let Some(Ok(msg)) = stream.next().await {
             match msg {
@@ -116,6 +116,9 @@ async fn control_loop(state: Arc<AppState>, router: Arc<axum::Router>, cfg: Rela
                         }
                         ControlMessage::Ping { nonce } => {
                             let _ = out_tx.send(ControlMessage::Pong { nonce });
+                        }
+                        ControlMessage::ServerHello { ok: true, .. } => {
+                            *state.relay_status.lock().unwrap() = RelayStatus::Connected;
                         }
                         ControlMessage::ServerHello { ok: false, reason } => {
                             *state.relay_status.lock().unwrap() =
@@ -183,12 +186,18 @@ async fn dispatch(
 
 async fn stream_loop(state: Arc<AppState>, cfg: RelayConfig) {
     let mut backoff_ms: u64 = 500;
-    loop {
-        let url = format!("{}/director/stream", cfg.base_url);
-        let Ok((ws, _)) = tokio_tungstenite::connect_async(&url).await else {
+    // 任意"早期失败 → 退避后重连"路径都走这个 macro,免得忘了 sleep 跌进热循环。
+    macro_rules! backoff_continue {
+        () => {{
             tokio::time::sleep(Duration::from_millis(backoff_ms + rand_jitter_ms())).await;
             backoff_ms = (backoff_ms * 2).min(5000);
             continue;
+        }};
+    }
+    loop {
+        let url = format!("{}/director/stream", cfg.base_url);
+        let Ok((ws, _)) = tokio_tungstenite::connect_async(&url).await else {
+            backoff_continue!();
         };
         backoff_ms = 500;
         let (mut sink, mut stream) = ws.split();
@@ -200,13 +209,20 @@ async fn stream_loop(state: Arc<AppState>, cfg: RelayConfig) {
             version: PROTOCOL_VERSION,
         };
         if sink.send(WsMsg::Text(serde_json::to_string(&hello).unwrap())).await.is_err() {
-            continue;
+            backoff_continue!();
         }
-        // 等 ServerHello
-        match stream.next().await {
-            Some(Ok(WsMsg::Text(_t))) => {} // 假定 ok;严格起见可解析校验
-            _ => continue,
-        };
+        // 等 ServerHello — 严格解析。ok=false 或不是 ServerHello 都重连。
+        let ok = matches!(
+            stream.next().await,
+            Some(Ok(WsMsg::Text(t)))
+                if matches!(
+                    serde_json::from_str::<ControlMessage>(&t),
+                    Ok(ControlMessage::ServerHello { ok: true, .. })
+                )
+        );
+        if !ok {
+            backoff_continue!();
+        }
         // 订阅 broker 推帧
         let mut rx = state.capture.subscribe();
         loop {
@@ -221,8 +237,7 @@ async fn stream_loop(state: Arc<AppState>, cfg: RelayConfig) {
                 break;
             }
         }
-        tokio::time::sleep(Duration::from_millis(backoff_ms + rand_jitter_ms())).await;
-        backoff_ms = (backoff_ms * 2).min(5000);
+        backoff_continue!();
     }
 }
 
