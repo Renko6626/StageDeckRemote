@@ -1,0 +1,54 @@
+\section*{提案摘要}
+\addcontentsline{toc}{section}{提案摘要}
+
+\subsection*{问题}
+
+漫展、晚会、典礼这类舞台演出几乎全部依赖 PowerPoint 作为视觉主轴,但 PPT 的常规控制路径在演出场景下并不可靠:
+
+\begin{itemize}
+  \item 翻页器靠 USB / 蓝牙信号,后台和舞台之间多隔一道布幕,常丢信号。
+  \item 主持人在舞台上,而 PPT 跑在后台的工作机上 —— 现场反应慢一拍,串场卡顿。
+  \item 内嵌答题、抽奖、票选等互动模块要现场操控,翻页器搞不定 mouse-click 触发的 VBA 宏。
+  \item 紧急情况(冷场、设备故障)需要瞬间黑屏/锁屏,翻页器没有这套语义。
+\end{itemize}
+
+\subsection*{方案}
+
+\app\ 把 PowerPoint 控制权拆成两个角色,通过 LAN(或校园网中继)桥接:
+
+\begin{itemize}
+  \item \role{导播} —— 后台工作机,Tauri 桌面应用,看完整画面、管授权、随时一键紧急锁。
+  \item \role{主持人} —— 任何手机,扫码进网页,不装任何 App,就能翻页、触发 PPT 宏、申请黑屏/恢复。
+\end{itemize}
+
+主持人能做的每一件事,都要导播先\role{开远控}并且主持人自己\role{ARM}才生效;导播的紧急锁严格压制主持人,演出失控风险被结构性约束。
+
+\subsection*{为什么这套不一样}
+
+\begin{infobox}
+\textbf{三个不同}让\app\ 不止是"网页版翻页器":
+\begin{itemize}
+  \item \textbf{LAN + Relay 双通道}。同一栋楼用 LAN(零延迟),跨场地或上校园网用 Relay(经 CLAB 中继),主持人手机端代码不变。
+  \item \textbf{三层授权锁}。\role{开远控 → 紧急锁 → ARM}三道闸门串联,任何一道关上主持人都点不动。
+  \item \textbf{真正的 PPT 自动化}。不是模拟翻页键,而是直接接 PowerPoint COM,能触发幻灯片里 VBA 宏,把"按钮答题"这类互动模块也接进来。
+\end{itemize}
+\end{infobox}
+
+\subsection*{对元火动漫社的价值}
+
+\begin{itemize}
+  \item \textbf{演出更稳} —— 主持人手机即翻页器,LAN 直连\,$\sim$\,50\,ms 内响应,远比无线翻页器抗干扰。
+  \item \textbf{互动节目兜底} —— cosplay 大赛分数公布、漫展抽奖、PPT 答题环节全可接管,不再依赖某个特定工作人员守着鼠标。
+  \item \textbf{零安装} —— 主持人换人当场扫码即用,新人 30 秒上手,不培训。
+  \item \textbf{紧急可控} —— 黑屏、锁屏、收回授权都在导播一键之间,事故面缩到最小。
+\end{itemize}
+
+\subsection*{建议}
+
+社团若愿意作为首批演出落地伙伴,\app\ 项目组承诺:
+
+\begin{enumerate}
+  \item 提供安装包 + 现场一次演出陪测;
+  \item 按反馈定向优化(如答题模板、cosplay 评分模板);
+  \item 在白皮书"致谢"页公开标注合作。
+\end{enumerate}

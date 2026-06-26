@@ -1,0 +1,10 @@
+# XeLaTeX 构建产物;源码才是真理,PDF 跑 make 现做
+*.aux
+*.log
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+sections/*.aux
+*.pdf

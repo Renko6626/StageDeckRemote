@@ -1,0 +1,3 @@
+# 真截图位:把 Windows 上实拍的 PNG 放这里,替换 sections/*.tex 里的
+# \screenshot{...}{...} 占位为 \includegraphics[width=12cm]{figures/<name>.png}。
+# 已包含的 \usepackage{graphicx} 已就位,加图后直接 make 即可。
