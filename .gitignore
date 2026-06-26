@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 /out/
 .superpowers/
+
+# Workspace 化后只读根 Cargo.lock;src-tauri/Cargo.lock 是僵尸文件,别复活。
+src-tauri/Cargo.lock

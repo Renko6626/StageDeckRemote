@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::app_state::AppState;
-use crate::{log, routes};
+use crate::log;
 
 /// 启动 Axum 服务并阻塞运行（由 lib.rs 在 Tauri 的 async 运行时中 spawn）。
 /// 传入预先构建的 router 实例，与 relay_client 共享同一路由逻辑。
@@ -22,10 +22,4 @@ pub async fn run_with_router(state: Arc<AppState>, router: Arc<axum::Router>) {
     if let Err(e) = axum::serve(listener, app).await {
         log::event(&state, format!("服务异常退出：{e}"));
     }
-}
-
-/// 向后兼容包装：内部构建 router 后调用 run_with_router。
-pub async fn run(state: Arc<AppState>) {
-    let router = Arc::new(routes::router(state.clone()));
-    run_with_router(state, router).await;
 }

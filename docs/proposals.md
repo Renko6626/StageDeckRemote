@@ -10,18 +10,11 @@
 
 已知尾巴。没什么决策成本,该清就清。
 
-- [ ] **relay session 宽限期 reaper**(Important · ~30 行)
-  spec §13 写了 60s 宽限期,代码里 `last_seen`、`drop_session()` 都就位,缺一个后台 task。
-  现在有 `/admin/status` 能直接看到僵尸 session,是好契机做这条。
-- [ ] **`relay_client::control_loop` 状态时序**(Minor · ~5 行)
-  当前在 `ClientHello` 发完就置 `RelayStatus::Connected`,实际应在收到 `ServerHello { ok: true }` 后再置。
-  半个 RTT 的"假绿"窗口。
-- [ ] **`relay_client::stream_loop` 校 ServerHello**(Minor · ~10 行)
-  目前任何文本帧都当成功。应解析 `ControlMessage::ServerHello`,`ok == false` 时不订阅 broker、直接退出走重连。
-- [ ] **删 `web_server::run` 死代码**(Nit · ~5 行)
-  v0.2.0 起被 `run_with_router` 取代,只是作为兼容 wrapper 留着。lib.rs 已经全部走新入口,可删。
-- [ ] **删 `src-tauri/Cargo.lock` 僵尸文件**(Nit · 一行 git rm)
-  workspace 化后只读根 `Cargo.lock`;`src-tauri/Cargo.lock` 留着只制造混乱,CLAUDE.md 已经备注但留着是误导源。
+- [x] ~~**relay session 宽限期 reaper**~~ — 见 "已完成"。spec §13 兑现:`collect_expired` 摘 sid + 10s tick reaper。
+- [x] ~~**`relay_client::control_loop` 状态时序**~~ — Connected 推迟到 `ServerHello{ok:true}` 抵达后。见 "已完成"。
+- [x] ~~**`relay_client::stream_loop` 校 ServerHello**~~ — 严格解析 + 早期失败路径全走 backoff。见 "已完成"。
+- [x] ~~**删 `web_server::run` 死代码**~~ — 见 "已完成"。
+- [x] ~~**删 `src-tauri/Cargo.lock` 僵尸文件**~~ — `git rm` + `.gitignore` 防复活。见 "已完成"。
 - [x] ~~`use crate::session::Session` unused import~~ — 已在 admin page PR(commit `8212e19`)顺手清掉。
 
 ---
@@ -124,7 +117,7 @@
 - [x] proposals.md 写出来(就是本文件)
 - [x] release 脚本 + CHANGELOG 起头
 - [x] relay 结构化日志(tracing)
-- [ ] Tier 1 那 5 条尾巴一次性清掉
+- [x] Tier 1 那 5 条尾巴一次性清掉
 - [ ] GitHub Actions CI
 
 **Sprint 2** — 可观测性
@@ -144,6 +137,7 @@
 
 按日期倒序追加;链接到 commit 或 PR。
 
+- `2026-06-26` · Tier 1 五条尾巴清掉:relay session 宽限期 reaper(`SessionTable::collect_expired` + 10s tick)/ `relay_client` control+stream WS 严格 ServerHello 校验 + 状态时序修正 / 删 `web_server::run` / 删 `src-tauri/Cargo.lock` 僵尸文件 — Tier 1
 - `2026-06-26` · 自动化 release 脚本(`scripts/release.sh`)+ CHANGELOG.md 起头 — Tier 2
 - `2026-06-26` · relay 结构化日志(tracing-subscriber + 关键事件点)— Tier 2
 - `2026-06-26` · proposals.md 起草(就是本文件)— 元
