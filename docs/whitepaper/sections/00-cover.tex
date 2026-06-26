@@ -1,0 +1,34 @@
+% 封面 — 极简,一个 A3 标志 + 标题 + 副标题 + 版本日期
+\begin{titlepage}
+\centering
+\vspace*{4cm}
+
+% A3 标志 — 准星 + 推进雪佛龙 + LIVE 红点
+\begin{tikzpicture}[line cap=round, line join=round]
+  \def\R{2.4cm}
+  % 四角准星
+  \foreach \x/\y/\ax/\ay in {-1/1/0.5/-0.5, 1/1/-0.5/-0.5, -1/-1/0.5/0.5, 1/-1/-0.5/0.5} {
+    \draw[line width=2.4pt, sdink] (\x*\R, \y*\R) -- ($(\x*\R, \y*\R) + (\ax, 0)$);
+    \draw[line width=2.4pt, sdink] (\x*\R, \y*\R) -- ($(\x*\R, \y*\R) + (0, \ay)$);
+  }
+  % 中心雪佛龙(推进)
+  \draw[line width=3pt, sdink, line cap=butt]
+    (-0.65, 0.55) -- (0.35, 0) -- (-0.65, -0.55);
+  \draw[line width=3pt, sdink, line cap=butt]
+    (-0.05, 0.55) -- (0.95, 0) -- (-0.05, -0.55);
+  % LIVE 红点
+  \fill[sdred] (1.7, 1.7) circle (4.5pt);
+\end{tikzpicture}
+
+\vspace{1.6cm}
+{\Huge\sffamily\bfseries\color{sdink} StageDeck Remote}\\[6pt]
+{\Large\sffamily\color{sdink} 舞台演出 PowerPoint 远程控制系统}\\[3pt]
+{\large\sffamily\color{sddim} 技术白皮书 \& 操作指南}\\
+
+\vfill
+
+{\large\sffamily\color{sddim} 版本 v\sdVersion \quad·\quad \sdDate}\\[6pt]
+{\small\sffamily\color{sddim} \url{https://github.com/Renko6626/StageDeckRemote}}
+
+\vspace{1.5cm}
+\end{titlepage}

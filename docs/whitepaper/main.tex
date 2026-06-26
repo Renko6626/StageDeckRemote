@@ -1,0 +1,41 @@
+\documentclass[UTF8,a4paper,11pt,heading=true]{ctexart}
+
+% 版本号 / 日期 — 单点维护,封面 + 页眉都从这里取
+\newcommand{\sdVersion}{0.2.0}
+\newcommand{\sdDate}{2026 年 6 月}
+
+\input{preamble}
+
+\begin{document}
+
+\input{sections/00-cover}
+\thispagestyle{empty}
+\clearpage
+
+% 目录(可选;轻量版可以注释掉,改为更紧凑)
+\pagenumbering{roman}
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}\setcounter{page}{1}
+
+\input{sections/01-summary}
+\clearpage
+
+\input{sections/02-scenarios}
+\clearpage
+
+\input{sections/03-architecture}
+\clearpage
+
+\input{sections/04-deployment}
+\clearpage
+
+\input{sections/05-operations}
+\clearpage
+
+\input{sections/06-security}
+\clearpage
+
+\input{sections/99-appendix}
+
+\end{document}

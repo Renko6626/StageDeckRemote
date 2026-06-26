@@ -1,0 +1,87 @@
+\section*{附录 A · 系统要求}
+\addcontentsline{toc}{section}{附录 A · 系统要求}
+
+\subsection*{导播工作机}
+\begin{itemize}
+  \item Windows 10 1809+ / Windows 11(WGC、IDispatch COM 自动可用)。
+  \item PowerPoint 365 / 2019 / 2021(其他版本未测;LibreOffice / Keynote 不支持)。
+  \item 任意 x86\_64 CPU,$\geq$\,4\,GiB RAM,集成显卡即可。
+  \item LAN 模式:连入与主持人手机相同的 WiFi 网段。
+  \item Relay 模式:可访问 Relay 服务器地址(校园网或公网)。
+\end{itemize}
+
+\subsection*{主持人端}
+\begin{itemize}
+  \item iOS 14+ / Android 10+ / 桌面 Chromium 90+ / Safari 15+。
+  \item **不需要安装任何 App**。
+  \item 屏幕宽度建议 $\geq$\,375\,px(普通智能手机即可)。
+\end{itemize}
+
+\subsection*{Relay 服务器(可选)}
+\begin{itemize}
+  \item Linux x86\_64(已在 Ubuntu 22.04 / Debian 12 上验证)。
+  \item $\sim$\,3\,MiB 二进制 + $\sim$\,30\,MiB 运行时内存;典型一台演出占 1\,$\sim$\,2 个 CPU 线程。
+  \item 公网或校园网可达 IP + 一个 TCP 端口(默认 8080)。
+\end{itemize}
+
+\vspace{0.6em}
+
+\section*{附录 B · 协议简介}
+\addcontentsline{toc}{section}{附录 B · 协议简介}
+
+\app\ 的通信协议在仓库 \texttt{crates/protocol/} 里以 \texttt{ControlMessage} 枚举定义,Relay 控制隧道、主持人 HTTP API 都基于它。关键消息(类型 / 用途):
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{l X}
+\toprule
+\textbf{Message} & \textbf{用途}\\
+\midrule
+\texttt{ClientHello}        & 导播端初次连接 Relay 时发,带 session\_id / token / secret。\\
+\texttt{ServerHello}        & Relay 回复\,\texttt{\{ok: true|false, reason?\}}。\\
+\texttt{TunnelReq}          & Relay $\to$ 导播:把主持人的 HTTP 请求(method/path/headers/body)反向打过来。\\
+\texttt{TunnelResp}         & 导播 $\to$ Relay:对应响应(status/headers/body),Relay 再回给主持人。\\
+\texttt{TokenUpdate}        & 导播在演出中重置访问码时通知 Relay,Relay 边缘 token 校验跟着更新。\\
+\texttt{Ping} / \texttt{Pong} & 控制隧道心跳,用于宽限期过期判定。\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+主持人 HTTP API(LAN 模式下直接走;Relay 模式下被\,\texttt{TunnelReq/Resp}\,封装):
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{l l X}
+\toprule
+\textbf{方法} & \textbf{路径} & \textbf{说明}\\
+\midrule
+GET  & \texttt{/api/status}        & 远控/锁/ARM 状态(无敏感字段)。\\
+GET  & \texttt{/api/slide\_state}  & 当前页号 + 互动形状列表。\\
+GET  & \texttt{/api/snapshot.jpg}  & 一次性截图(MJPEG 备用)。\\
+GET  & \texttt{/api/stream.mjpg}   & MJPEG 推流。\\
+POST & \texttt{/api/next, /prev, /black, /restore} & 翻页 / 黑屏 / 恢复。\\
+POST & \texttt{/api/action}        & 触发指定形状名绑定的宏。\\
+POST & \texttt{/api/lock, /unlock} & 主持人侧 ARM 开/关。\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+完整协议规范见 \texttt{docs/protocol.md}。
+
+\vspace{0.6em}
+
+\section*{附录 C · 联系方式}
+\addcontentsline{toc}{section}{附录 C · 联系方式}
+
+\begin{itemize}
+  \item \textbf{源代码}:\url{https://github.com/Renko6626/StageDeckRemote}
+  \item \textbf{Issue / 反馈}:GitHub Issues
+  \item \textbf{许可证}:详见仓库 \texttt{LICENSE}
+  \item \textbf{合作 / 演出陪测请求}:〔此处填入合伙人联系方式〕
+\end{itemize}
+
+\vspace{1cm}
+
+\begin{center}
+\small\sffamily\color{sddim}
+本文档基于\,\app\,v\sdVersion\,生成 \quad·\quad \sdDate\\[2pt]
+StageDeck Remote 项目组保留版权\,·\,允许非商用转发与展示
+\end{center}

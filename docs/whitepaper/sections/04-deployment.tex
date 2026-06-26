@@ -1,0 +1,76 @@
+\section{部署模式}
+
+\app\ 支持两种传输路径:\role{LAN 直连}和\role{Relay 中继}。两者在主持人手机端完全无感 —— 同一个网页,扫不同的码而已。
+
+\subsection{LAN 模式 —— 默认}
+
+\textbf{典型场景}:演出现场后台机器和主持人手机在同一个 WiFi(漫展场地路由器,或临时部署一台便携路由器)。
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.4cm,
+  box/.style={rectangle, draw=sdink, line width=0.7pt, rounded corners=2pt, minimum width=2.6cm, minimum height=0.95cm, align=center, font=\small\sffamily},
+  flow/.style={-{Stealth[length=4pt]}, line width=0.7pt}
+]
+  \node[box] (host) {导播工作机\\\scriptsize\color{sddim}Windows · 8787 端口};
+  \node[box, right=of host, fill=sdpanel] (rt) {WiFi 路由器};
+  \node[box, right=of rt] (phone) {主持人手机\\\scriptsize\color{sddim}浏览器};
+  \draw[flow] (host) -- (rt);
+  \draw[flow] (rt)   -- (phone);
+  \node[font=\scriptsize\sffamily\color{sddim}, below=0.15cm of host]  {http://192.168.x.x:8787};
+\end{tikzpicture}
+\end{center}
+
+\textbf{特点。} 零延迟($\sim$\,30-80\,ms 端到端),不依赖外网,完全自治。一旦路由器和导播机连上同一网段,主持人扫的二维码就是导播工作机自身的局域网 IP + token。
+
+\begin{warnbox}
+\textbf{现场坑}:某些场地(尤其大型展馆 / 教学楼)WiFi 上做了"客户端隔离"(AP isolation),同一 WiFi 里设备互相看不见。**测试当天务必带备用便携路由器或手机热点**,在策划会上和场地方明确确认这一条。
+\end{warnbox}
+
+\subsection{Relay 模式 —— 跨网兜底}
+
+\textbf{典型场景}:现场 WiFi 不能配置 / 客户端隔离 / 后台机器和舞台在两栋楼,但导播机能上校园网,主持人也在校园网或外网。
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.2cm,
+  box/.style={rectangle, draw=sdink, line width=0.7pt, rounded corners=2pt, minimum width=2.6cm, minimum height=0.95cm, align=center, font=\small\sffamily},
+  relay/.style={rectangle, draw=sdaccent, line width=1pt, rounded corners=2pt, minimum width=2.6cm, minimum height=0.95cm, align=center, font=\small\sffamily, fill=sdpanel},
+  flow/.style={-{Stealth[length=4pt]}, line width=0.7pt}
+]
+  \node[box]                      (host)  {导播工作机};
+  \node[relay, right=of host]     (relay) {Relay 服务器\\\scriptsize\color{sddim}CLAB · 公网 IP};
+  \node[box, right=of relay]      (phone) {主持人手机};
+  \draw[flow] (host)  -- node[above, font=\scriptsize\sffamily\color{sddim}, align=center]{WSS 控制\\+ 二进制推流} (relay);
+  \draw[flow] (relay) -- node[above, font=\scriptsize\sffamily\color{sddim}, align=center]{HTTPS\\+ MJPEG} (phone);
+\end{tikzpicture}
+\end{center}
+
+\textbf{怎么工作。} 导播工作机主动开两条出站 WebSocket 到 Relay:控制隧道 + 二进制推流隧道。Relay 在公网开 80/8080,把主持人的 HTTP 请求经控制隧道反向打到导播机,把推流转写成普通 MJPEG 流给主持人浏览器。\textbf{业务路由代码两边完全一样} —— 导播侧的 \texttt{axum::Router} 被 Relay 通过 \texttt{tower::ServiceExt::oneshot} 当成 Service 调一次,响应再原路返回。主持人 URL 只是从 LAN 的 \texttt{:8787/presenter} 变成 Relay 的 \texttt{/r/<sid>/presenter},一行业务代码不用改。
+
+\textbf{适用边界}:
+
+\begin{itemize}
+  \item \textbf{适合}:校园内多栋楼跨网段、彩排时主持人不在现场提前演练、合作社团之间远程协调。
+  \item \textbf{暂不建议}:对外公开演出(白皮书撰写时 Relay 仅在校园内验证;TLS、限速、抗 DDoS 还在路线图上)。
+\end{itemize}
+
+设计上详见 ADR-0007(\texttt{docs/adr/0007-relay-hybrid-tunnel.md})。
+
+\subsection{两种模式如何选}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{l X X}
+\toprule
+\textbf{条件} & \textbf{LAN 模式} & \textbf{Relay 模式}\\
+\midrule
+现场能控 WiFi(自带路由器 / 热点) & \cellcolor{sdpanel}\bfseries 首选 & 备选 \\
+场地 WiFi 客户端隔离 & 失效 & \cellcolor{sdpanel}\bfseries 唯一选择 \\
+导播机和主持人分两栋楼 & 通常失效 & \cellcolor{sdpanel}\bfseries 首选 \\
+延迟敏感(走位拍点) & \cellcolor{sdpanel}\bfseries 优 ($\sim$50\,ms) & 一般 ($\sim$80-200\,ms) \\
+依赖外网可达性 & 否 & \cellcolor{sdred!10}\bfseries 是 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+实际部署建议:**LAN 为主、Relay 为兜底**,导播 GUI 里 Relay 配置常驻,关键演出当天保持 Relay 状态绿灯,真出问题 30 秒切。

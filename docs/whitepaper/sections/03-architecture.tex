@@ -1,0 +1,67 @@
+\section{架构总览}
+
+\app\ 是一个 Tauri v2 桌面应用(Rust 内核 + Vue 3 GUI)。除了导播 GUI 之外,它在本机起一个 Axum HTTP 服务,把主持人页和 API 暴露在局域网上;主持人端是嵌在二进制里的纯 HTML/CSS/JS,扫码即用,不装任何 App。
+
+\subsection{两个界面,两个信任级别,一份共享状态}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.9cm and 1.4cm,
+  surface/.style={rectangle, draw=sdink, line width=0.8pt, rounded corners=2pt, minimum width=3.6cm, minimum height=1.1cm, align=center, font=\small\sffamily},
+  store/.style={ellipse, draw=sdaccent, line width=1pt, minimum width=3.4cm, minimum height=1.1cm, align=center, font=\small\sffamily, fill=sdpanel},
+  client/.style={rectangle, draw=sddim, dashed, minimum width=2.6cm, minimum height=0.9cm, align=center, font=\small\sffamily\color{sddim}},
+  flow/.style={-{Stealth[length=4pt]}, line width=0.6pt}
+]
+  \node[client]                       (dwv)  {导播 webview\\Vue 3};
+  \node[client, right=4.8cm of dwv]   (host) {主持人手机\\任意浏览器};
+
+  \node[surface, below=of dwv]        (ipc)  {Tauri IPC\\\scriptsize\color{sddim}(privileged)};
+  \node[surface, below=of host]       (http) {Axum HTTP\\\scriptsize\color{sddim}(token-gated)};
+
+  \node[store, below=2cm of $(ipc)!0.5!(http)$] (state) {Arc\textless AppState\textgreater\\\scriptsize\color{sddim}三层锁 + token + 控制状态};
+
+  \node[surface, below=of state, fill=sdpanel]  (com) {PowerPoint COM\\\scriptsize\color{sddim}IDispatch · 直接调宏};
+
+  \draw[flow] (dwv)   -- (ipc);
+  \draw[flow] (host)  -- (http);
+  \draw[flow] (ipc)   -- (state);
+  \draw[flow] (http)  -- (state);
+  \draw[flow] (state) -- (com);
+
+  \begin{scope}[on background layer]
+    \node[draw=sddim, dashed, fit=(ipc) (http) (state) (com), inner sep=8pt, rounded corners=2pt] (proc) {};
+    \node[font=\scriptsize\sffamily\color{sddim}, above right=-0.4cm and 0.1cm of proc.north west] {Tauri 应用进程(Windows 主机)};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
+\textbf{要点}:导播路径走 Tauri IPC,从来不绑端口,LAN 上不可达。主持人路径走 HTTP,每个请求都查 token + 三层锁;不带 token 或锁未开的请求被在路由层直接拒绝。两条路径共享同一份 \texttt{AppState},底下统一调 PowerPoint COM。
+
+\subsection{三层锁}
+
+\app\ 把"主持人能不能下指令"拆成三个串联的开关,只有全开才放行:
+
+\begin{center}\small\sffamily
+\role{开远控}(导播,默认\textcolor{sdred}{OFF}) $\to$
+\role{未紧急锁}(导播,默认\textcolor{sdok}{OFF=未锁}) $\to$
+\role{ARM}(主持人自己,默认\textcolor{sdred}{OFF})
+\end{center}
+
+\begin{itemize}
+  \item \textbf{开远控}:导播总开关。关掉等于把整个 HTTP 服务静默 —— 任何带正确 token 的请求都被 403。
+  \item \textbf{紧急锁}:导播专用的"急停"。主持人 ARM 即使是开的,紧急锁一按全部动作立刻失效,且 ARM 被自动清零。
+  \item \textbf{ARM}:主持人页上的开关。主持人自己负责"现在我要开始控制了",ARM 关掉时主持人自己点按钮也无效。
+\end{itemize}
+
+这个串联设计的实际意义:演出中临时事故(主持人麦克风掉了、节目换序),导播不需要和主持人沟通"你先别按",直接按紧急锁就完。
+
+\subsection{画面回传}
+
+后台导播和主持人都需要看到 PPT 当前画面。\app\ 通过 Windows Graphics Capture(WGC)抓窗,**对采样 hash 做变化检测**,只在画面变了时编码一次 JPEG,把结果广播给所有订阅者(broker 模式)。这样静止幻灯片下 CPU $\approx$ 0,翻页瞬间才有编码开销。
+
+\begin{itemize}
+  \item 导播 GUI 通过 Tauri Channel 直接吃二进制帧,无 base64,无 HTTP 转码。
+  \item 主持人页通过 \texttt{GET /api/stream.mjpg} 拉 multipart/x-mixed-replace 流,浏览器原生 \texttt{<img>} 标签即可显示。
+\end{itemize}
+
+设计上详见 ADR-0006(\texttt{docs/adr/0006-capture-stream-broker.md})。
