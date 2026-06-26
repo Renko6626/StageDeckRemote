@@ -1,8 +1,8 @@
 \section{技术细节(给元火技术部)}
 
-这一节的预设读者会写代码、能看 git 仓库、对 Rust / TypeScript / Windows COM 这些有基本概念。前面架构总览只讲做什么,这里讲怎么做、为什么这么做、坑在哪儿。看完这一节,你应该能在仓库里定位到任何一个具体行为对应的代码,以及评估"加一个 XX 功能"需要动哪些文件。
+这一节的预设读者会写代码、对 Rust / TypeScript / Windows COM 有基本概念。前面架构总览说做什么,这里说怎么做、为什么这么做、关键的技术选择长什么样。
 
-\subsection{技术栈一览}
+\subsection{技术栈}
 
 \begin{center}\small
 \begin{tabularx}{\linewidth}{l X}
@@ -14,148 +14,122 @@
 GUI 前端          & Vue 3 + Pinia + Vue Router + Vite + TypeScript \\
 HTTP 服务         & Axum 0.7 \\
 异步运行时        & tokio 1.x(\,\texttt{features = ["full"]}\,) \\
-COM 调用          & windows-rs(\texttt{IDispatch} via \texttt{VARIANT}) \\
+COM 调用          & \texttt{windows-rs}(\texttt{IDispatch} via \texttt{VARIANT}) \\
 画面捕获          & Windows Graphics Capture(WGC)+ GDI BitBlt 兜底 \\
 JPEG 编码         & \texttt{image} crate,quality = 82 \\
 帧分发            & \texttt{tokio::sync::watch::Sender<Arc<EncodedFrame>>} \\
 Relay 隧道        & axum WS + \texttt{tokio-tungstenite} + \texttt{tower::ServiceExt} \\
-协议序列化        & \texttt{serde\_json}(ControlMessage 枚举) \\
-日志              & \texttt{tracing} + \texttt{tracing-subscriber}(env-filter + JSON 可选) \\
-跨编译            & \texttt{cargo-xwin}(Linux 主机出 Windows MSVC 二进制) \\
+协议序列化        & \texttt{serde\_json}(\texttt{ControlMessage} 枚举) \\
+日志              & \texttt{tracing} + \texttt{tracing-subscriber} \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-\subsection{代码结构 —— Cargo workspace}
+\subsection{代码结构}
 
-仓库根是一个 Cargo workspace,三个 crate 加一份 Vue 前端:
+仓库根是一个 Cargo workspace,三个 Rust crate + 一份 Vue 前端:
 
 \begin{lstlisting}
 StageDeckRemote/
-├── Cargo.toml             # workspace 根,authoritative Cargo.lock 在这里
-├── package.json           # pnpm + Vite + Vue
-├── src/                   # 导播 GUI 前端 (Vue 3 + TS)
-│   ├── views/             # DirectorView.vue 等顶层视图
-│   ├── components/        # 拆成小组件
-│   ├── stores/            # Pinia 状态
-│   ├── utils/api.ts       # Tauri IPC 封装
-│   └── presenter/         # 主持人页(纯 HTML/CSS/JS,不走 Vite)
-├── src-tauri/             # 主应用(导播侧 + 主持人 HTTP 服务都在这)
-│   ├── src/
-│   │   ├── lib.rs         # 入口,起 Tauri + 起 Axum + spawn relay 等
-│   │   ├── app_state.rs   # 全局 Arc<AppState>,共享状态
-│   │   ├── commands.rs    # 导播 IPC 命令(privileged,LAN 不可达)
-│   │   ├── routes.rs      # 主持人 HTTP 路由 + token 鉴权
-│   │   ├── ppt_com.rs     # PowerPoint COM (IDispatch)
-│   │   ├── capture.rs     # WGC + GDI 兜底
-│   │   ├── capture_session.rs  # 后台 WGC + encoder thread
-│   │   ├── input.rs       # SendInput 模拟鼠标
-│   │   ├── window_manager.rs   # 枚举/选窗 + 归一化→屏幕坐标
-│   │   ├── web_server.rs  # Axum 服务启动
-│   │   ├── relay_client.rs     # Relay 出站 WS 客户端
-│   │   └── log.rs         # 内存环 + GUI 日志面板
-│   └── icons/
-├── crates/
-│   ├── protocol/          # 共享协议:ControlMessage 枚举等
-│   └── relay/             # Linux 部署的 Relay 二进制 + admin 页
-└── docs/
-    ├── architecture.md / protocol.md / network.md   # 长文档
-    ├── adr/               # 重要设计决策记录(0001-0007)
-    ├── superpowers/specs/ # 设计 spec(dated,append-only)
-    └── superpowers/plans/ # 实现计划
+├── src/                   # 导播 GUI 前端(Vue 3 + TS)
+│   └── presenter/         # 主持人页(纯 HTML/JS,不走 Vite,编译进二进制)
+├── src-tauri/             # 主应用进程(导播 IPC + 主持人 HTTP 服务)
+│   └── src/
+│       ├── lib.rs         # 入口,起 Tauri + 起 Axum + spawn relay 客户端
+│       ├── app_state.rs   # Arc<AppState>,所有共享状态都在这
+│       ├── commands.rs    # 导播 Tauri IPC(privileged,LAN 不可达)
+│       ├── routes.rs      # 主持人 HTTP 路由 + token 鉴权
+│       ├── ppt_com.rs     # PowerPoint COM 控制
+│       ├── capture.rs     # WGC 抓图 + GDI 兜底
+│       ├── capture_session.rs  # 后台捕获 + 编码 + broker 推帧
+│       ├── input.rs       # SendInput 模拟鼠标(视觉点击兜底用)
+│       ├── window_manager.rs   # 枚举/选窗 + 归一化→屏幕坐标
+│       └── relay_client.rs     # Relay 出站 WS 客户端
+└── crates/
+    ├── protocol/          # 共享协议:ControlMessage 枚举
+    └── relay/             # Linux 部署的 Relay 二进制
 \end{lstlisting}
+
+主应用进程的"两套 API,一份状态"是核心结构选择,见下。
 
 \subsection{两套 API,一份状态}
 
-\app\ 的一个核心结构选择:导播和主持人走两套完全不同的 surface,但底下共用同一份 \texttt{Arc<AppState>}。
+主应用进程把导播和主持人放在两个完全不同的 surface,但底下共享同一份 \texttt{Arc<AppState>}:
 
 \begin{itemize}
-  \item \textbf{导播 = Tauri IPC}(\texttt{commands.rs},在 \texttt{lib.rs} 里 \texttt{.invoke\_handler} 注册)。privileged。这些命令\textit{从不绑端口},LAN 上结构性不可达。能做的事包括:枚举/选窗、开关远控、紧急锁、本地翻页、重置访问码、Relay 配置。
+  \item \textbf{导播 = Tauri IPC}(\texttt{commands.rs})。privileged。这些命令\textit{从不绑端口},LAN 上结构性不可达。能做的事:枚举/选窗、开关远控、紧急锁、本地翻页、重置访问码、Relay 配置。
   \item \textbf{主持人 = Axum HTTP}(\texttt{routes.rs} + \texttt{web\_server.rs})。token-gated。所有路由都查 \texttt{click\_allowed = remote\_enabled \&\& !control\_locked \&\& presenter\_unlocked},任一项 false 就 403。
 \end{itemize}
 
-\texttt{routes.rs} 不依赖 \texttt{tauri} crate —— 也就是说,它能在没有 webkit2gtk 的 Linux 上单独编译/单测,这也是为什么 Relay 模式下导播侧的 Axum Router 能被 Relay 客户端直接复用(见下文)。
+一个值得注意的工程后果:\texttt{routes.rs} 不依赖 \texttt{tauri} crate,可以在没有 webkit2gtk 的 Linux 上单独编译和单测。这也是 Relay 模式下,同一个 \texttt{axum::Router} 能被 Relay 客户端(\texttt{relay\_client.rs})复用的前提:Relay 收到 \texttt{TunnelReq} 后用 \texttt{tower::ServiceExt::oneshot} 把同一个 Router 当 Service 调一次,\textbf{业务路由代码零修改}就能跑在两种传输模式下。
 
 \subsection{PowerPoint 控制:为什么是 IDispatch COM}
 
-\texttt{ppt\_com.rs} 直接通过 COM \texttt{IDispatch} 控制 PowerPoint:
-
-\begin{lstlisting}
-let app: IDispatch = GetActiveObject(&PowerPoint_Application_CLSID)?;
-let view: IDispatch = invoke(&app, "SlideShowWindows", ...)
-                        .index(1)
-                        .get("View")?;
-invoke(&view, "Next", &[])?;
-\end{lstlisting}
-
-接 COM 而不是别的方案,是因为另外两条路都有否决性问题:
+\texttt{ppt\_com.rs} 直接通过 COM \texttt{IDispatch} 控制 PowerPoint。两条对比方案在演出场景下都不工作:
 
 \begin{itemize}
-  \item \textbf{SendKeys / 模拟键盘} —— 只能翻页,触发不了任意 VBA 宏。漫展互动答题这套就过不了。
-  \item \textbf{Office.js add-in} —— PowerPoint 加载 add-in 需要签名 + 信任流程,演出当场临时装不实际。
-  \item \textbf{COM IDispatch} —— PowerPoint 自己定义的接口,任何 \texttt{.pptm} 都吃,不需要改 PPT,不需要签名,接口稳定多年。
+  \item \textbf{SendKeys / 模拟键盘} —— 只能翻页,触发不了任意 VBA 宏。漫展互动答题这类需求过不去。
+  \item \textbf{Office.js add-in} —— 加载 add-in 需要签名 + 信任流程,演出当场临时装不实际。
 \end{itemize}
 
-\textbf{踩过两次的坑:VARIANT 类型萃取。} PowerPoint 大部分返回值是 \texttt{VT\_DISPATCH (9)} 包着 \texttt{IDispatch} 指针。从 \texttt{VARIANT} 拿对象\textbf{必须}用 \texttt{IDispatch::try\_from(\&VARIANT)},不能用 \texttt{IUnknown::try\_from(\&VARIANT)} —— 后者在 \texttt{VT\_DISPATCH} 上的解引用是错的,会返回非法指针然后在第一个 invoke 上炸。这个 bug 历史上回归过两次,在 \texttt{ppt\_com.rs} 顶端有注释提醒。
+\textbf{COM IDispatch} 是 PowerPoint 自己定义的 OLE 自动化接口,任何 \texttt{.pptm} 都吃,不需要改 PPT,不需要签名,接口稳定多年。\app\ 通过 \texttt{GetActiveObject("PowerPoint.Application")} 拿到\,application 对象 —— 注意是窗口无关的(独立于截屏抓到的窗),所以即使主持人选窗选错了也不影响 PPT 控制。翻页/黑屏/恢复走 \texttt{SlideShowWindows(1).View} 的 \texttt{Next/Previous/BlackOut/NormalView}。
 
-\textbf{宏检测逻辑}(场景 B 答题环节的底层):枚举当前幻灯片 \texttt{Shapes},对每个 shape 读 \texttt{ActionSettings(ppMouseClick).Action};\texttt{== 8} 表示 \texttt{ppActionRunMacro},再读 \texttt{.Run} 拿到宏名。结果 \texttt{Vec<(shape\_name, macro\_name)>} 通过 \texttt{slide\_state()} 返回给主持人页 —— 但主持人只看到 \texttt{shape\_name},触发时服务端再读一次 \texttt{ActionSettings.Run}(不信任客户端发回的宏名)。
+\textbf{宏检测}(场景 B 答题环节的底层):枚举当前幻灯片所有 \texttt{Shape},对每个读 \texttt{ActionSettings(ppMouseClick).Action};\texttt{== 8} 表示 \texttt{ppActionRunMacro},再读 \texttt{.Run} 拿到宏名。结果 \texttt{Vec<(shape\_name, macro\_name)>} 推给主持人页,主持人页只显示 \texttt{shape\_name}(选项 A / 选项 B 等),不暴露宏名。触发时主持人发回 \texttt{shape\_name},服务端\textit{再读一次} \texttt{ActionSettings.Run} 拿当时绑的宏调用 —— \textbf{不信任客户端发回的宏名},也就消除了"如果有人嗅探了 token 能不能借此触发任意宏"的风险。
+
+\textbf{VARIANT 类型萃取的一个关键细节}:PowerPoint 返回值大多是 \texttt{VT\_DISPATCH (9)} 包着 \texttt{IDispatch} 指针。从 \texttt{VARIANT} 萃取对象\textbf{必须}用 \texttt{IDispatch::try\_from(\&VARIANT)},不能用 \texttt{IUnknown::try\_from(\&VARIANT)} —— 后者对 \texttt{VT\_DISPATCH} 的解引用是错的,拿到的指针在第一个 \texttt{Invoke} 调用上会炸。\texttt{ppt\_com.rs} 顶端有注释提醒。
 
 \subsection{截图与推流:变化驱动 + Broker 扇出}
 
-旧版(v0.1.15 之前)是主持人页轮询 \texttt{GET /api/snapshot.jpg}, 抓窗+编码每次都做。CPU 高、延迟高。v0.1.16 重构成下面这套(\,ADR-0006\,):
+主持人页和导播 GUI 都要看到 PPT 当前画面。\app\ v0.1.16 起的方案(ADR-0006):
 
 \begin{lstlisting}
 WGC 后台会话(capture_session.rs)
-  └→ 每帧 BGRA 写到 shared 内存
-       └→ encoder thread 采样 hash 检测
-           ├→ 没变 → 不编码,空转
+  └→ 持续把帧 BGRA 写到 shared 内存
+       └→ encoder thread 做采样 hash
+           ├→ 没变 → 不编码,等下一帧
            └→ 变了 → 编码 JPEG q82 一次
                └→ frame_broker: watch::Sender<Arc<EncodedFrame>>
-                   ├→ 主持人侧: GET /api/stream.mjpg
-                   │   (multipart/x-mixed-replace,浏览器 <img> 原生)
-                   └→ 导播 GUI 侧: Tauri Channel<ipc::Response>
+                   ├→ 主持人: GET /api/stream.mjpg
+                   │   (multipart/x-mixed-replace,浏览器 <img> 原生消费)
+                   └→ 导播 GUI: Tauri Channel<ipc::Response>
                        (二进制直接推到 webview <canvas>)
 \end{lstlisting}
 
-几个具体决定的理由:
+两个具体决定:
 
-\textbf{采样 hash 而不是整图 hash}。整图 hash 在 1080p 上要扫 6 M 像素,~3-5 ms。采样是把屏幕切 8$\times$8 网格,只 hash 64 个像素,\,$<$\,0.1 ms。漏检率很低,因为 PowerPoint 任何"翻页 / 黑屏 / 互动按钮按下"都会改变大片区域,采样几乎必中。
+\textbf{采样 hash 而不是整图 hash}。整图 hash 在 1080p 上要扫 6 M 像素,~3-5 ms。采样是把屏幕切 8\,$\times$\,8 网格,只 hash 64 个像素,\,$<$\,0.1 ms。漏检率很低,因为 PowerPoint 任何"翻页 / 黑屏 / 互动按钮按下"都会改变大片区域,采样几乎必中。即使采样错过一帧,下一帧立刻补上 —— 也就 16 ms。
 
-\textbf{\texttt{watch} 而不是 \texttt{broadcast}}。视频流场景"永远只看最新"是对的:慢消费者掉中间帧不影响快消费者,而 broadcast 在慢消费者前会 lag-drop 或拖累所有人。\texttt{watch::Sender} 的语义("只保留最新值,所有 receiver 各自决定何时取")正好匹配。\textbf{这是 v0.1.16 重构里最重要的一行选择,不要轻动。}
+\textbf{\texttt{watch} 而不是 \texttt{broadcast}}。视频流场景"永远只看最新"是对的语义:慢消费者(网络差的主持人手机)掉中间帧不影响快消费者,而 \texttt{broadcast} 在慢消费者前会 lag-drop 或拖累所有人。\texttt{tokio::sync::watch::Sender} 的语义("只保留最新值,所有 receiver 各自决定何时取最新")正好匹配视频流。
 
-\textbf{idle CPU $\approx$ 0}。静止幻灯片下采样 hash 一直相同,encoder thread 在 \texttt{watch} 上等待 condvar,实测 0-1\% CPU。翻页瞬间 encoder 占一个核 \,$\sim$\,30-50 ms 完成编码。
+实测结果:静止幻灯片 idle CPU $\approx$ 0-1\%;翻页瞬间 encoder 占一个核 \,$\sim$\,30-50 ms 完成编码。
 
 \subsection{Relay 隧道:控制+推流分两条 WebSocket}
 
-Relay 架构详见 ADR-0007。简述:导播工作机主动从内网\textbf{出站}两条 WS 到 Relay,Relay 在公网开 80/8080 接主持人。
+Relay 架构(ADR-0007)的核心选择是\textbf{把控制信道和推流信道拆成两条独立 WS}。
 
 \textbf{控制 WS}(\texttt{/director/control}):
 
 \begin{enumerate}
-  \item 导播首帧发 \texttt{ClientHello \{sid, token, secret, version\}}。Relay 校验 sid 格式 + secret 一致(register\_or\_attach,允许同 secret 重连接管),回 \texttt{ServerHello \{ok, reason\}}。
-  \item 之后是双向消息流:
-  \begin{itemize}
-    \item Relay → 导播:\texttt{TunnelReq \{req\_id, method, path, query, headers, body\_b64\}},把主持人的 HTTP 请求封进来。
-    \item 导播 → Relay:\texttt{TunnelResp \{req\_id, status, headers, body\_b64\}}、\texttt{TokenUpdate}、\texttt{Pong}。
-  \end{itemize}
-  \item 导播侧的关键一行:把同一个 \texttt{axum::Router} 通过 \texttt{tower::ServiceExt::oneshot} 当 Service 调一次,\textbf{routes.rs 业务逻辑零修改}就能跑在两种模式下。
+  \item 导播首帧发 \texttt{ClientHello \{session\_id, token, secret, version\}}。Relay 校验 sid 格式 + secret 一致(允许同 secret 重连接管),回 \texttt{ServerHello \{ok, reason\}}。
+  \item 之后是双向消息流。Relay 收到主持人 HTTP 请求,封装成 \texttt{TunnelReq \{req\_id, method, path, query, headers, body\_b64\}} 经控制 WS 反向打给导播。导播在内部通过 \texttt{tower::ServiceExt::oneshot} 把这个请求喂给自己的 \texttt{axum::Router}(就是 LAN 模式下听 8787 的同一个 Router),拿到响应封成 \texttt{TunnelResp} 回送。Relay 拆开 \texttt{TunnelResp} 再返回给主持人 HTTP 连接。
+  \item 心跳:\texttt{Ping/Pong} 配合 60s 宽限期。控制 WS 断开 60s 内重连 = 接管(session 状态保留);超时 = 后台 reaper 摘掉 session。
 \end{enumerate}
 
 \textbf{推流 WS}(\texttt{/director/stream}):
 
 \begin{enumerate}
   \item 同样的 ClientHello / ServerHello 握手。
-  \item 之后单向:导播 subscribe 自己的 \texttt{frame\_broker},每次 watch 触发就 \texttt{ws.send(Binary(jpeg\_bytes))} 一帧。
-  \item Relay 收到 binary 帧也广播给自己的 watch,再分发给主持人的 \texttt{multipart/x-mixed-replace} 流。
+  \item 之后是单向流:导播 subscribe 自己的 \texttt{frame\_broker},每次 watch 触发就 \texttt{ws.send(Binary(jpeg\_bytes))} 一帧。
+  \item Relay 收到 binary 帧,推给自己的 watch,主持人端的 \texttt{multipart/x-mixed-replace} 流再分发。
 \end{enumerate}
 
-\textbf{为什么分两条 WS,不混一条}:控制信道是小帧(JSON,~几百 B)、频繁、需要严格 ordering;推流信道是大帧(JPEG q82,~50-200 KB)、可丢、要尽可能不阻塞控制信道。混一条 WS 的话,翻页指令(控制)会排在大推流帧后面,翻页延迟无法保证。分两条是 ADR-0007 里一个看似简单但对操作体验决定性的选择。
+\textbf{为什么分两条 WS,不混一条}:控制信道是小帧(JSON,几百字节)、频繁、需要严格 ordering;推流信道是大帧(JPEG q82,50-200 KB)、可丢、要尽可能不阻塞控制信道。混一条 WS 的话,翻页指令会排在大推流帧后面,翻页延迟无法保证。分两条之后,翻页响应基本只受 RTT 限制,与画面流量无关。
 
 \subsection{并发模型:tokio + spawn\_blocking 边界}
 
-整个进程跑 tokio 多线程 runtime(\texttt{\#[tokio::main]} default flavor)。但 PowerPoint COM 调用是\textbf{同步阻塞的},而且有些(\texttt{Application.Run})可以阻塞数百毫秒。直接在 async handler 里调会卡死 tokio worker(worker 数量有限,几个 stuck COM 调用就让整个 HTTP 服务停摆)。
+整个进程跑 tokio 多线程 runtime。但 PowerPoint COM 调用是\textbf{同步阻塞}的,而且有些(\texttt{Application.Run})可能阻塞数百毫秒。直接在 async handler 里调会卡 tokio worker —— worker 数量有限,几个 stuck COM 调用就让整个 HTTP 服务停摆。
 
-\texttt{routes.rs} 里所有触发 COM 的 handler 都包 \texttt{tokio::task::spawn\_blocking}(audit 0.1.14 加的):
+\textbf{规则}:\texttt{routes.rs} 里所有触发 COM 的 handler 都包 \texttt{tokio::task::spawn\_blocking},把 COM 调用挪到 blocking 线程池:
 
 \begin{lstlisting}
 async fn next(State(state): State<Arc<AppState>>) -> Response {
@@ -167,61 +141,12 @@ async fn next(State(state): State<Arc<AppState>>) -> Response {
 }
 \end{lstlisting}
 
-\textbf{锁规范化}:\texttt{AppState::lock()} 是一个统一的 helper,处理 \texttt{Mutex::lock()} 的 \texttt{PoisonError} —— 如果锁中毒,记日志后取 inner 继续用(\texttt{into\_inner()}),而不是 \texttt{.expect()} panic 或 \texttt{if let Ok} 静默 no-op。所有锁点必须走这个 helper,不要自己 \texttt{.unwrap()} —— 这是 audit 0.1.14 修过的真实事故源。
+WGC 截图也类似 —— 抓窗的同步调用走 \texttt{spawn\_blocking}。tokio worker 留给 async I/O(HTTP 路由、Relay WS、Channel 推帧),不让任何 COM 或截图调用占着 worker 不放。
 
-\subsection{测试覆盖}
+\textbf{锁}:\texttt{AppState::lock()} 是统一的 helper,处理 \texttt{std::sync::Mutex::lock()} 的 \texttt{PoisonError}:锁中毒时记日志后取 inner 继续用(\texttt{into\_inner()})而不是 panic。所有锁点必须走这个 helper,代码里不应该出现裸的 \texttt{.unwrap()} / \texttt{.expect()} —— 中毒一次整个 \texttt{AppState} 不可用,演出当场没救。
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{l r X}
-\toprule
-\textbf{crate} & \textbf{测试数} & \textbf{覆盖} \\
-\midrule
-protocol           & 3  & ControlMessage 序列化往返、版本字段 \\
-relay              & 14 & SessionTable register/reattach/drop/collect\_expired、admin 渲染、e2e tunnel \\
-stagedeck-remote   & 32 & lock 谓词、normalized→screen 坐标映射、parse\_macro\_names、ppt\_window\_rank、log ring、Relay 解码 \\
-\bottomrule
-\end{tabularx}
-\end{center}
+\subsection{测试与跨编译}
 
-总 49 测试,Linux 全套跑通 \,$\sim$\,2 秒(workspace 单 \texttt{cargo test --workspace})。
+仓库一共 49 个单元/集成测试:protocol 3 个(\texttt{ControlMessage} 序列化往返)、relay 14 个(session 注册/重连/宽限过期、admin 渲染、e2e tunnel)、stagedeck-remote 32 个(锁谓词、归一化→屏幕坐标、宏名解析、窗口排序、log ring、Relay 解码等纯逻辑)。Linux 一次 \texttt{cargo test --workspace} 全跑通 \,$\sim$\,2 秒。
 
-\textbf{什么测了,什么没测}:纯逻辑、数据结构、协议序列化、HTTP 路由 + token 鉴权都有 Linux 单元测试。COM、WGC、SendInput 这些 Windows-only 模块在 Linux 编译成 \texttt{\#[cfg(not(windows))]} 桩,单测覆盖不到,只能靠\textbf{Windows 交叉编译(0 errors)+ 真机运行验证}。能不能把逻辑抽出一个不依赖 Windows API 的纯函数(像 \texttt{parse\_macro\_names} 或 \texttt{ppt\_window\_rank}),是判断"这块代码值不值得 Linux 单测"的实操规则。
-
-\subsection{构建}
-
-\textbf{这个 Linux 开发盒的特殊安排}:作者的开发机是 Linux,系统没装 \texttt{webkit2gtk}(Tauri Linux 依赖),也没 sudo。所以裸的 \texttt{cargo build} / \texttt{tauri dev} 会失败,要走两个预装的用户级 conda env:
-
-\begin{itemize}
-  \item \texttt{tauri-dev}:conda-forge \texttt{gtk3 webkit2gtk4.1 libsoup pkg-config nsis},跑\,\texttt{cargo test --workspace}\,用。
-  \item \texttt{xwin}:\texttt{clang/lld/llvm + makensis + cargo-xwin},跑 Windows 交叉编译用(WebView2 目标,不需要 webkit2gtk)。
-\end{itemize}
-
-具体环境变量在 \texttt{CLAUDE.md} 顶部。\textbf{如果元火技术部用自己的 Windows 开发机,这两个 env 完全不需要}:在 Windows 上 \texttt{cargo build --release} 直出 \texttt{exe}。Linux 跨编是给单 Linux 主机出 Windows 安装包的便利,不是必经路径。
-
-\textbf{Release 流程}已脚本化在 \texttt{scripts/release.sh}:接一个新版本号参数,自己改 4 处版本号、跑测试、跨编 + NSIS、出 Linux relay 二进制、commit + tag。
-
-\subsection{如果想加功能 —— 文件入口指南}
-
-按功能拆,每条说"动这些文件,看这个测试,起码这套就基本完整":
-
-\begin{center}\small
-\begin{tabularx}{\linewidth}{l X X}
-\toprule
-\textbf{要加的功能} & \textbf{动哪些文件} & \textbf{看哪些测试} \\
-\midrule
-主持人页加一个新按钮     & \texttt{src/presenter/presenter.\{html,js,css\}} + \texttt{src-tauri/src/routes.rs} 加路由 + \texttt{app\_state.rs} 加预设 + \texttt{src-tauri/src/log.rs} 记录 & \texttt{routes::tests::*} \\
-新的 PPT 控制操作       & \texttt{src-tauri/src/ppt\_com.rs} 加方法(注意 \texttt{VT\_DISPATCH} 萃取) + \texttt{routes.rs} 加 handler 包 \texttt{spawn\_blocking} & 手工 Windows 真机验证 + cross-compile 0 errors \\
-导播 GUI 新视图         & \texttt{src/views/} 加 \texttt{.vue} + \texttt{src/router/index.ts} 注册 + \texttt{src/stores/} 加状态(如需) + \texttt{src-tauri/src/commands.rs} 加 IPC 命令 + \texttt{lib.rs} \texttt{.invoke\_handler} 注册 & \texttt{pnpm build} 编译通过 \\
-Relay 新协议消息        & \texttt{crates/protocol/src/lib.rs} 加 \texttt{ControlMessage} 变体 + \texttt{crates/relay/src/director\_ws.rs} 加处理 + \texttt{src-tauri/src/relay\_client.rs} 加发送/处理 & \texttt{protocol::tests::*} + \texttt{relay::tests::*} \\
-Relay 管理页加监控指标   & \texttt{crates/relay/src/admin.rs} 加列 + \texttt{crates/relay/src/session.rs} 加字段(原子计数器优先,避免锁) + \texttt{crates/relay/src/director\_ws.rs} 更新 & \texttt{admin::tests::*} \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\textbf{工作流约定}:作者本人坚持 brainstorm $\to$ spec $\to$ plan $\to$ implement $\to$ review 的小步骤工作流,所有非平凡改动先在 \texttt{docs/superpowers/specs/YYYY-MM-DD-*.md} 写 spec,再在 \texttt{docs/superpowers/plans/} 写 plan,然后才动代码。元火技术部加功能不强求走这套,但如果想保持代码质量稳定推荐照做 —— 现有 spec/plan 也是最好的"这个项目怎么思考问题"的入门材料。
-
-ADR(\texttt{docs/adr/0001-0007})记录所有"为什么不那样做"的决定,**改架构前先读 ADR**。
-
-\subsection{联系}
-
-代码相关问题走 GitHub Issues(\,\url{https://github.com/Renko6626/StageDeckRemote/issues}\,);具体到元火本场演出的支持走合伙人(附录 C)。
+\textbf{纯逻辑可单测,Windows-only 模块靠跨编 + 真机验证}。COM、WGC、SendInput 这些只有在 Windows 上才有真实现,Linux 上是 \texttt{\#[cfg(not(windows))]} 桩。所以涉及这些模块的 PR 的最低验证标准是:\,(1) 仓库根 \texttt{cargo test --workspace} 全绿;(2) \texttt{cargo xwin build --target x86\_64-pc-windows-msvc} 0 errors;(3) 至少一次 Windows 真机运行验证。前两条 Linux 主机就能做(配合 \texttt{cargo-xwin}),只有第三条需要真 Windows 机器。
