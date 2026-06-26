@@ -1,26 +1,43 @@
-% 封面 — 极简,一个 A3 标志 + 标题 + 副标题 + 版本日期
+% 封面 — 极简,A3 标志 (与 app icon 等比例:128×128 SVG → 6.4cm TikZ) + 标题 + 副标题 + 版本日期
+%
+% 标志坐标全部直接从 assets/logo/stagedeck-icon.svg 等比转换得到,缩放系数
+% 6/128 = 0.046875 cm / SVG unit。这样保证它和发出去的安装包图标、Windows
+% 任务栏图标、Web 收藏夹图标长得完全一样,而不是另一张"差不多的"图。
 \begin{titlepage}
 \centering
-\vspace*{4cm}
+\vspace*{3.5cm}
 
-% A3 标志 — 准星 + 推进雪佛龙 + LIVE 红点
-\begin{tikzpicture}[line cap=round, line join=round]
-  \def\R{2.4cm}
-  % 四角准星
-  \foreach \x/\y/\ax/\ay in {-1/1/0.5/-0.5, 1/1/-0.5/-0.5, -1/-1/0.5/0.5, 1/-1/-0.5/0.5} {
-    \draw[line width=2.4pt, sdink] (\x*\R, \y*\R) -- ($(\x*\R, \y*\R) + (\ax, 0)$);
-    \draw[line width=2.4pt, sdink] (\x*\R, \y*\R) -- ($(\x*\R, \y*\R) + (0, \ay)$);
-  }
-  % 中心雪佛龙(推进)
-  \draw[line width=3pt, sdink, line cap=butt]
-    (-0.65, 0.55) -- (0.35, 0) -- (-0.65, -0.55);
-  \draw[line width=3pt, sdink, line cap=butt]
-    (-0.05, 0.55) -- (0.95, 0) -- (-0.05, -0.55);
-  % LIVE 红点
-  \fill[sdred] (1.7, 1.7) circle (4.5pt);
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % ── 暗底瓦片 (SVG: <rect width=128 height=128 fill=#101012>) ──
+  \fill[sdtile, rounded corners=10pt] (-3.2, -3.2) rectangle (3.2, 3.2);
+
+  % ── 准星: stroke-width=6, stroke-linecap=square ──
+  % SVG 6 单位 × 0.046875 cm/unit = 0.281 cm ≈ 8 pt
+  \begin{scope}[draw=sdmark, line width=8pt, line cap=rect, line join=miter]
+    % TL  M16 38 V16 H38   → (-2.25, 1.219)→(-2.25, 2.25)→(-1.219, 2.25)
+    \draw (-2.25,  1.219) -- (-2.25,  2.25) -- (-1.219,  2.25);
+    % TR  M90 16 H112 V38  → (1.219, 2.25)→(2.25, 2.25)→(2.25, 1.219)
+    \draw ( 1.219,  2.25) -- ( 2.25,  2.25) -- ( 2.25,  1.219);
+    % BL  M16 90 V112 H38  → (-2.25, -1.219)→(-2.25, -2.25)→(-1.219, -2.25)
+    \draw (-2.25, -1.219) -- (-2.25, -2.25) -- (-1.219, -2.25);
+    % BR  M90 112 H112 V90 → (1.219, -2.25)→(2.25, -2.25)→(2.25, -1.219)
+    \draw ( 1.219, -2.25) -- ( 2.25, -2.25) -- ( 2.25, -1.219);
+  \end{scope}
+
+  % ── 双雪佛龙 "推进/下一页": stroke-width=11, round caps + round joins ──
+  % 11 × 0.046875 = 0.516 cm ≈ 15 pt
+  \begin{scope}[draw=sdmark, line width=15pt, line cap=round, line join=round]
+    % chevron 1  M44 42 L64 64 L44 86  → (-0.9375, 1.03125)→(0, 0)→(-0.9375, -1.03125)
+    \draw (-0.9375,  1.03125) -- (0, 0) -- (-0.9375, -1.03125);
+    % chevron 2  M62 42 L82 64 L62 86  → (-0.09375, 1.03125)→(0.84375, 0)→(-0.09375, -1.03125)
+    \draw (-0.09375, 1.03125) -- (0.84375, 0) -- (-0.09375, -1.03125);
+  \end{scope}
+
+  % ── LIVE 红点: cx=96 cy=64 r=5  → (1.5, 0) r=0.234 cm ──
+  \fill[sdred] (1.5, 0) circle (0.234cm);
 \end{tikzpicture}
 
-\vspace{1.6cm}
+\vspace{1.8cm}
 {\Huge\sffamily\bfseries\color{sdink} StageDeck Remote}\\[6pt]
 {\Large\sffamily\color{sdink} 舞台演出 PowerPoint 远程控制系统}\\[3pt]
 {\large\sffamily\color{sddim} 技术白皮书 \& 操作指南}\\
