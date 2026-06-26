@@ -1,0 +1,41 @@
+\section{和其他选择比}
+
+社团做演出常考虑的几种工具,和\,\app\,大致这样对位:
+
+\textbf{蓝牙 / USB 翻页器。} 元火现在的兜底方案。问题前面已经说过了:十几米加一道布幕信号到不了,只能翻页触发不了答题按钮,主持人手里也没有计时。在元火场地里这条路本来就走不通。
+
+\textbf{Office 365 翻页助手 / WPS 演讲助手 这类手机 App。} 把主持人手机当远程翻页器用,确实绕开了信号问题。但有几条限制:主持人手机得装 App、登 Office 或 WPS 账号,场地网要能让两台设备彼此发现;只能翻页,触发不了 PPT 内嵌的 VBA 宏(答题环节还是过不去);主持人临时换人时,得在新设备上重走"装 App + 登账号 + 配对"流程,演出当场操作不现实。
+
+\textbf{专业舞台控制软件 —— ProPresenter / QLab / vMix 这类。} 功能上比\,\app\,强得多:歌词字幕、多源切换、视频回放、灯光集成,大型演出全套场控都能做。代价也是真实的:售价几百美元起一个 license;主要面向教会、演唱会、大型直播场景,UI 是英文,菜单两三百个选项,真要培训一个新人当导播,几天起跳;架设流程几个小时,临时演出根本来不及。\textbf{对漫展/晚会这种"主要是 PPT、偶尔有视频"的需求,杀鸡用牛刀,而且牛刀还得自己掏钱买。}
+
+\textbf{\app\ 这边的取舍。} 功能上比专业舞台软件少很多(没有歌词字幕、没有多源切换、没有视频回放控制);但针对漫展/动漫社这种特定场景做了特化:
+
+\begin{itemize}
+  \item 开箱即用 —— 一个 \texttt{exe} 一路下一步,Windows 自带的 PowerPoint 装好就能跑;主持人那边扫码即用,零安装。
+  \item PPT 互动按钮原生支持 —— 答题、抽奖、票选这种 VBA 宏触发的环节是设计目标之一。
+  \item 校园网内部 Relay 已就绪 —— 元火多场地(二教 / 邱德拔 / 百周年讲堂)演出用\,PKU CLAB\,内的中继直接打通,社团这边不需要配任何服务器。
+  \item 免费,源码开放 —— 真遇到元火特有需求,项目组直接调代码改,不用等厂商版本迭代。
+\end{itemize}
+
+\subsection{快速对照}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{l X X X}
+\toprule
+\textbf{维度} & \textbf{蓝牙翻页器} & \textbf{专业舞台软件} & \textbf{\app} \\
+\midrule
+主持人远程翻页       & \cellcolor{sdred!10}信号到不了 & 能(强)            & \cellcolor{sdpanel}能 \\
+触发 PPT 答题宏      & \cellcolor{sdred!10}不能       & 部分(配置复杂)    & \cellcolor{sdpanel}原生支持 \\
+计时给主持人         & \cellcolor{sdred!10}无         & 部分(需主屏二级配置)& \cellcolor{sdpanel}SLIDE 大字栏 \\
+紧急锁              & \cellcolor{sdred!10}无         & 部分                & \cellcolor{sdpanel}导播一键 \\
+主持人换人           & \cellcolor{sdred!10}物理交接   & 重新配置             & \cellcolor{sdpanel}扫新码 \\
+导播学习成本         & 无                              & 几天                 & \cellcolor{sdpanel}30 分钟 \\
+主持人学习成本       & 无                              & 不直接接触           & \cellcolor{sdpanel}30 秒 \\
+售价                & 50-500 元                      & \$400+/license       & \cellcolor{sdpanel}免费 \\
+校园网跨场地         & \cellcolor{sdred!10}不行       & 行(需自行配置)      & \cellcolor{sdpanel}CLAB Relay 现成 \\
+中文 / 漫展场景特化  & N/A                            & \cellcolor{sdred!10}英文,通用 & \cellcolor{sdpanel}中文,漫展特化 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{总结一句话。} 专业舞台软件是"通用大型场控全套",\app\ 是"针对漫展/动漫社做了取舍的 PPT 控制小工具"。在漫展场景下,\app\ 的"砍 90\% 功能换 1/10 复杂度"取舍是合算的;真到要做大型多媒体 LIVE 演唱会,专业软件还是更合适。两者并不冲突。
