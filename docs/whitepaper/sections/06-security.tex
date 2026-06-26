@@ -34,6 +34,7 @@
   \item \textbf{Relay 仅校园内验证}:TLS、限速、抗 DDoS 都还没补完,对外公开演出暂不建议跑 Relay。
   \item \textbf{平台限定 Windows}:macOS / Linux 用户当主持人没问题(浏览器即可),但导播机必须是 Windows + PowerPoint。
   \item \textbf{PowerPoint 必须在放映模式}:\app\ 通过 \texttt{SlideShowWindows(1).View} 翻页,编辑模式抓不到。这是设计上认了 —— 演出场景本来就在放映模式。
+  \item \textbf{互动按钮依赖 PPT 的 VBA 化}:答题、抽奖、票选这类要触发幻灯片内嵌操作的环节,PPT 必须是 \texttt{.pptm} 格式 + 按钮绑 \texttt{ppActionRunMacro}。普通 \texttt{.pptx} 翻页/黑屏没问题,但互动模块不工作。如果 PPT 没 VBA 化,可以走"视觉 + 模拟鼠标点击"兜底路径(见\,\S\ref{sec:vba-prerequisite}\,),但不推荐 —— 不是\,\app\,本身的限制,是兜底路径在精度、延迟和排版鲁棒性上都比 VBA 路径差一个量级。
   \item \textbf{答题/投票数据回流}:目前互动按钮只触发宏,不收集"谁按了哪个"。要做观众投票汇总,需要后续开发(路线图\,Tier 4)。
   \item \textbf{观察席模式}:多个手机当"看客"看画面但不操控 —— 路线图\,Tier 4,目前所有持 token 的人理论上都能 ARM。
 \end{itemize}
