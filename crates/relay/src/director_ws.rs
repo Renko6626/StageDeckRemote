@@ -141,16 +141,21 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
         }
     };
     let _ = send_json(&mut socket, &ControlMessage::ServerHello { ok: true, reason: None }).await;
+    // Mark stream connected for admin status; clear when this loop exits.
+    sess.stream_connected.store(true, std::sync::atomic::Ordering::SeqCst);
     // Receive binary frames and broadcast via watch channel.
     while let Some(Ok(msg)) = socket.next().await {
         match msg {
             Message::Binary(b) => {
                 let _ = sess.frame_tx.send(Arc::new(b));
+                sess.frames_pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                *sess.frame_last_at.lock().await = Some(std::time::Instant::now());
             }
             Message::Close(_) => break,
             _ => {}
         }
     }
+    sess.stream_connected.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 async fn send_json(socket: &mut WebSocket, msg: &ControlMessage) -> Result<(), axum::Error> {

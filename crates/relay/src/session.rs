@@ -1,6 +1,6 @@
 use protocol::ControlMessage;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch, Mutex, RwLock};
@@ -16,6 +16,15 @@ pub struct Session {
     pub pending: Mutex<HashMap<u64, oneshot::Sender<ControlMessage>>>,
     pub next_req_id: AtomicU64,
     pub last_seen: Mutex<Instant>,
+    // ── 只读统计:仅 /admin/status 用,业务逻辑不读这些字段 ──
+    /// 该 session 首次 register 的时刻;不随 reconnect 重置。
+    pub registered_at: Instant,
+    /// stream WS 推过来的二进制帧总数(累计;不随 reconnect 重置)。
+    pub frames_pushed: AtomicU64,
+    /// 最近一次接收到 stream 帧的时刻。
+    pub frame_last_at: Mutex<Option<Instant>>,
+    /// stream WS 当前是否连着(stream_loop 进出时 set true/false)。
+    pub stream_connected: AtomicBool,
 }
 
 pub struct SessionTable(pub RwLock<HashMap<SessionId, Arc<Session>>>);
@@ -51,6 +60,7 @@ impl SessionTable {
             return Ok(existing);
         }
         let (frame_tx, _) = watch::channel(Arc::new(Vec::new()));
+        let now = Instant::now();
         let sess = Arc::new(Session {
             secret,
             token: Mutex::new(token),
@@ -58,7 +68,11 @@ impl SessionTable {
             frame_tx,
             pending: Mutex::new(HashMap::new()),
             next_req_id: AtomicU64::new(1),
-            last_seen: Mutex::new(Instant::now()),
+            last_seen: Mutex::new(now),
+            registered_at: now,
+            frames_pushed: AtomicU64::new(0),
+            frame_last_at: Mutex::new(None),
+            stream_connected: AtomicBool::new(false),
         });
         tbl.insert(sid, sess.clone());
         Ok(sess)

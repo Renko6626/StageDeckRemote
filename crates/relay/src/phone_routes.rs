@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::session::Session;
 use crate::AppCtx;
 use axum::body::{Body, Bytes};
@@ -235,6 +236,10 @@ mod tests {
             pending: tokio::sync::Mutex::new(Default::default()),
             next_req_id: std::sync::atomic::AtomicU64::new(1),
             last_seen: tokio::sync::Mutex::new(std::time::Instant::now()),
+            registered_at: std::time::Instant::now(),
+            frames_pushed: std::sync::atomic::AtomicU64::new(0),
+            frame_last_at: tokio::sync::Mutex::new(None),
+            stream_connected: std::sync::atomic::AtomicBool::new(false),
         });
         (sess, rx)
     }
@@ -243,10 +248,12 @@ mod tests {
     async fn tunnel_rejects_wrong_token() {
         let ctx = Arc::new(AppCtx {
             sessions: crate::session::SessionTable::new(),
+            started_at: std::time::Instant::now(),
             config: crate::config::Config {
                 listen: "0.0.0.0:0".parse().unwrap(),
                 session_grace_secs: 60,
                 tunnel_timeout_secs: 30,
+                admin_token: None,
             },
         });
         let (sess, _rx) = mk_session();
@@ -270,10 +277,12 @@ mod tests {
     async fn tunnel_forwards_request_and_returns_response() {
         let ctx = Arc::new(AppCtx {
             sessions: crate::session::SessionTable::new(),
+            started_at: std::time::Instant::now(),
             config: crate::config::Config {
                 listen: "0.0.0.0:0".parse().unwrap(),
                 session_grace_secs: 60,
                 tunnel_timeout_secs: 5,
+                admin_token: None,
             },
         });
         let (sess, mut rx) = mk_session();
@@ -316,10 +325,12 @@ mod tests {
     async fn tunnel_alias_forwards_with_presenter_prefix() {
         let ctx = Arc::new(AppCtx {
             sessions: crate::session::SessionTable::new(),
+            started_at: std::time::Instant::now(),
             config: crate::config::Config {
                 listen: "0.0.0.0:0".parse().unwrap(),
                 session_grace_secs: 60,
                 tunnel_timeout_secs: 5,
+                admin_token: None,
             },
         });
         let (sess, mut rx) = mk_session();
@@ -365,10 +376,12 @@ mod tests {
     async fn stream_emits_multipart_after_frame_pushed() {
         let ctx = Arc::new(AppCtx {
             sessions: crate::session::SessionTable::new(),
+            started_at: std::time::Instant::now(),
             config: crate::config::Config {
                 listen: "0.0.0.0:0".parse().unwrap(),
                 session_grace_secs: 60,
                 tunnel_timeout_secs: 5,
+                admin_token: None,
             },
         });
         let (sess, _rx) = mk_session();
