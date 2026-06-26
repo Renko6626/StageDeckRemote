@@ -9,6 +9,10 @@ pub struct Config {
     pub session_grace_secs: u64,
     #[serde(default = "default_tunnel_timeout_secs")]
     pub tunnel_timeout_secs: u64,
+    /// 只读 admin 状态页的访问 token。`None` = 状态页禁用(404)。
+    /// 与 session token 互不相关;只用于 `GET /admin/status?token=<admin_token>`。
+    #[serde(default)]
+    pub admin_token: Option<String>,
 }
 
 fn default_grace_secs() -> u64 { 60 }
@@ -26,6 +30,7 @@ impl Config {
             listen: "0.0.0.0:8080".parse().unwrap(),
             session_grace_secs: 60,
             tunnel_timeout_secs: 30,
+            admin_token: None,
         }
     }
 }

@@ -12,11 +12,13 @@ async fn end_to_end_tunnel_and_stream() {
         listen: "127.0.0.1:0".parse().unwrap(),
         session_grace_secs: 60,
         tunnel_timeout_secs: 5,
+        admin_token: None,
     };
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let ctx = Arc::new(relay::AppCtx {
         sessions: relay::session::SessionTable::new(),
+        started_at: std::time::Instant::now(),
         config: cfg,
     });
     let app = relay::build_router(ctx.clone());
