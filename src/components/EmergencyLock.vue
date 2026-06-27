@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 紧急锁(从 LocalControlPanel.vue 拆出)。
+// 紧急锁按钮。
 // size="small" — Setup 模式 / 普通按钮高度。
 // size="large" — Live 模式 / 顶部巨型按钮,占满整宽,红色高亮。
 import { ref } from "vue";

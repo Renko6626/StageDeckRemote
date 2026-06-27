@@ -1,7 +1,5 @@
 <script setup lang="ts">
 // 控制状态总览 + 远控 toggle + 释放控制权 按钮。
-// 从 ControlStatus.vue 和 LocalControlPanel.vue(远控 toggle 部分)
-// 合并而来。
 //
 // mode prop 控制远控 toggle 的视觉权重:
 //   setup — toggle 是 Setup 阶段主操作,放大

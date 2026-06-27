@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 导播本地翻页(从 LocalControlPanel.vue 拆出,改名后只保留翻页)。
-// 远控 toggle 已搬去 StatusBar,紧急锁已搬去 EmergencyLock。
+// 导播本地翻页组件。
 import { ref } from "vue";
 
 import { api } from "../utils/api";
