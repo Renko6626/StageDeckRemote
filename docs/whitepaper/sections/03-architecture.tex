@@ -57,7 +57,7 @@
 
 \subsection{画面回传}
 
-后台导播和主持人都需要看到 PPT 当前画面。\app\ 通过 Windows Graphics Capture(WGC)抓窗,**对采样 hash 做变化检测**,只在画面变了时编码一次 JPEG,把结果广播给所有订阅者(broker 模式)。这样静止幻灯片下 CPU $\approx$ 0,翻页瞬间才有编码开销。
+后台导播和主持人都需要看到 PPT 当前画面。\app\ 通过 Windows Graphics Capture(WGC)抓窗,对采样 hash 做变化检测,只在画面变了时编码一次 JPEG,把结果广播给所有订阅者(broker 模式)。这样静止幻灯片下 CPU $\approx$ 0,翻页瞬间才有编码开销。
 
 \begin{itemize}
   \item 导播 GUI 通过 Tauri Channel 直接吃二进制帧,无 base64,无 HTTP 转码。

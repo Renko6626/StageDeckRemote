@@ -11,7 +11,7 @@
   \item \role{主持人}是\textbf{访问码信任} —— 任何持有当前 token 的人都能控制(限 ARM 后)。token 由导播按"重置访问码"生成,长 64-bit URL-safe 随机串。
 \end{itemize}
 
-设计上参考 ADR-0002:**主持人通道永远不应能做"导播能做的全部事"**(选窗、关进程、改设置、重置 token 都只走 Tauri IPC,网络上不可达)。
+设计上参考 ADR-0002:主持人通道永远不应能做"导播能做的全部事"(选窗、关进程、改设置、重置 token 都只走 Tauri IPC,网络上不可达)。
 
 \subsection{已落实的防御}
 
@@ -21,7 +21,7 @@
   \item \textbf{三层锁串联}(\role{开远控 → 紧急锁 → ARM}),任一层 OFF 全部主持人 API 被 403。
   \item \textbf{紧急锁全压制}:导播按一下,主持人 ARM 立刻被清,主持人不能"抢回"ARM。
   \item \textbf{\texttt{/api/status} 不暴露内部 cid},避免被动同 token 持有者反推当前控制者身份从而抢控。
-  \item \textbf{宏调用服务端二次解析}:主持人只传形状名,真正的宏名服务端再读一次,不信任客户端提交的宏名。
+  \item \textbf{宏调用服务端二次解析}:主持人只传形状名,宏名由服务端再读一次,不信任客户端提交的宏名。
   \item \textbf{LAN 模式不出网}:导播工作机不主动连任何外部服务,只有 Relay 模式启用时才有出站连接。
 \end{itemize}
 
@@ -30,7 +30,7 @@
 下面这些事\textbf{当前尚未做完或暂未做}。在策划会上被问到,请如实回答 —— 隐瞒比承认杀伤大:
 
 \begin{itemize}
-  \item \textbf{HTTP 明文(LAN 模式)}:LAN 内 token 在 query 串里明文走。**威胁模型假设 LAN 是物理可信的**(只有合法工作人员能接入)。若用公共 WiFi,务必走 Relay 模式或自带便携路由器。
+  \item \textbf{HTTP 明文(LAN 模式)}:LAN 内 token 在 query 串里明文走。威胁模型假设 LAN 是物理可信的(只有合法工作人员能接入)。若用公共 WiFi,务必走 Relay 模式或自带便携路由器。
   \item \textbf{Relay 仅校园内验证}:TLS、限速、抗 DDoS 都还没补完,对外公开演出暂不建议跑 Relay。
   \item \textbf{平台限定 Windows}:macOS / Linux 用户当主持人没问题(浏览器即可),但导播机必须是 Windows + PowerPoint。
   \item \textbf{PowerPoint 必须在放映模式}:\app\ 通过 \texttt{SlideShowWindows(1).View} 翻页,编辑模式抓不到。这是设计上认了 —— 演出场景本来就在放映模式。
@@ -46,9 +46,9 @@
   \item \textbf{每场重置 token。}导播 GUI 一键"重置访问码"会作废上一场所有发出去的二维码,杜绝"上次演出后忘记关\,\app\,被人扫旧码"。
   \item \textbf{主持人换人即重置。}多段演出每次换报幕员,导播按一次重置,新主持人扫新码,旧主持人手机里的页签自动失效。
   \item \textbf{严禁把 8787 端口对公网映射。}LAN 模式只在内网用;跨网必须经 Relay。
-  \item \textbf{Relay 部署在受信任的服务器上}(本项目目前用 PKU CLAB);**不要部署到不可控的第三方 VPS 上**,因为推流流量经过它一遍。
+  \item \textbf{Relay 部署在受信任的服务器上}(本项目目前用 PKU CLAB);不要部署到不可控的第三方 VPS 上,因为推流流量经过它一遍。
 \end{enumerate}
 
 \begin{warnbox}
-\textbf{红线}:**绝不要把\,\app\,改造成"通用桌面遥控"**。这意味着导播信任边界被打破 —— 从此 token 持有者就能动任意鼠标/键盘,这是远程桌面的所有风险全套移植过来。当前的"PPT 控制"标的是项目的护城河,守住它就守住了用户对安全性的整体信任。
+\textbf{红线}:\textbf{绝不要把\,\app\,改造成"通用桌面遥控"}。这意味着导播信任边界被打破 —— 从此 token 持有者就能动任意鼠标/键盘,这是远程桌面的所有风险全套移植过来。当前的"PPT 控制"标的是项目的护城河,守住它就守住了用户对安全性的整体信任。
 \end{warnbox}
