@@ -19,6 +19,8 @@ import DirectorMessages from "../components/DirectorMessages.vue";
 type DirectorMode = "setup" | "live";
 
 const app = useAppState();
+// 注意: Vue 3 <script setup> 下这些是 per-instance 变量(每个组件实例独立),
+// 不要随便挪进 composable —— 共享 state 会让两个 DirectorView 实例相互覆盖。
 let timer: number | undefined;
 let inFlight = false;
 
@@ -97,8 +99,8 @@ async function pull() {
   }
 }
 
-onMounted(() => {
-  pull();
+onMounted(async () => {
+  await pull();
   timer = window.setInterval(pull, 1500);
 });
 

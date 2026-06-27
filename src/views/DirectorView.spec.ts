@@ -164,3 +164,22 @@ describe("DirectorView — mode 不持久化(spec §2.1)", () => {
     expect(localStorage.getItem("sd.dir.mode")).toBeNull();
   });
 });
+
+describe("DirectorView — splitter localStorage 跨模式记住(spec §5.3)", () => {
+  it("railW 和 logH 从 localStorage 读入并跨 Setup ↔ Live 模式持久", async () => {
+    localStorage.setItem("sd.dir.railW", "420");
+    localStorage.setItem("sd.dir.logH", "350");
+    const wrapper = mountDv();
+    // 初始 Setup 模式: rail-w / log-h 已应用
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--rail-w: 420px");
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--log-h: 350px");
+    // 切到 Live
+    await wrapper.find("[data-test='mode-live']").trigger("click");
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--rail-w: 420px");
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--log-h: 350px");
+    // 切回 Setup
+    await wrapper.find("[data-test='mode-setup']").trigger("click");
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--rail-w: 420px");
+    expect(wrapper.find(".dashboard").attributes("style")).toContain("--log-h: 350px");
+  });
+});
