@@ -23,9 +23,7 @@
 
 按"演出前晚上能不能睡着"排:
 
-- [ ] **GitHub Actions CI**(50 行 yml,半小时)
-  触发 push/PR → 跑 `cargo test --workspace` + `cargo xwin build -p stagedeck-remote` + `pnpm build` + `node --check src/presenter/presenter.js`。
-  收益:每次 commit 自动验证,merge PR 心理安全。
+- [x] ~~**GitHub Actions CI**~~ —— `.github/workflows/ci.yml` 落了:push/PR 到 master 触发,Ubuntu runner 跑 `pnpm typecheck` + `pnpm build` + `pnpm test`(vitest) + `cargo test --workspace`。配套 `release.yml`:tag `v*.*.*` 推送触发 3 个 job(Windows NSIS / Linux relay / 收尾出 draft GitHub Release 挂俩产物)。CHANGELOG 抽取脚本 `scripts/extract-changelog.sh` 把对应 version section 当 release body。
 - [x] ~~**自动化 release 脚本**~~ 见下面"已完成"(commit 在本日完成)。
 - [x] ~~**relay 结构化日志(tracing)**~~ 见下面"已完成"。
 - [ ] **relay `/admin/metrics` 端点**(中,~100 行)
@@ -118,7 +116,7 @@
 - [x] release 脚本 + CHANGELOG 起头
 - [x] relay 结构化日志(tracing)
 - [x] Tier 1 那 5 条尾巴一次性清掉
-- [ ] GitHub Actions CI
+- [x] GitHub Actions CI(`.github/workflows/ci.yml` + `release.yml` + extract-changelog)
 
 **Sprint 2** — 可观测性
 - [ ] relay `/admin/metrics`(JSON + Prometheus)
@@ -137,6 +135,8 @@
 
 按日期倒序追加;链接到 commit 或 PR。
 
+- `2026-06-27` · GitHub Actions CI + Release (`.github/workflows/ci.yml` + `release.yml` + `scripts/extract-changelog.sh`) — Tier 2
+- `2026-06-27` · 导播 GUI Setup/Live 双模式重构 + vitest + 39 单测 (v0.2.1) — Tier 4 / 用户体验
 - `2026-06-26` · Tier 1 五条尾巴清掉:relay session 宽限期 reaper(`SessionTable::collect_expired` + 10s tick)/ `relay_client` control+stream WS 严格 ServerHello 校验 + 状态时序修正 / 删 `web_server::run` / 删 `src-tauri/Cargo.lock` 僵尸文件 — Tier 1
 - `2026-06-26` · 自动化 release 脚本(`scripts/release.sh`)+ CHANGELOG.md 起头 — Tier 2
 - `2026-06-26` · relay 结构化日志(tracing-subscriber + 关键事件点)— Tier 2

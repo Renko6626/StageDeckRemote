@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# 取消同一 ref 的旧 CI 运行(push 多次会节省 Actions 额度)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + tests + build (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust toolchain + workspace cache ──
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # Tauri 在 Linux 上的运行时依赖(workspace 里 src-tauri 含有 dev-only 的 Tauri 依赖,
+      # 即使我们这里不真跑 tauri-build 也要让 cargo resolve 通过)
+      - name: Install Linux Tauri deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      # ── Node + pnpm ──
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # ── Test gates ──
+      - name: Vue typecheck
+        run: pnpm typecheck
+
+      - name: Vue build
+        run: pnpm build
+
+      - name: Vue unit tests (vitest)
+        run: pnpm test
+
+      - name: Rust workspace tests
+        run: cargo test --workspace --quiet
