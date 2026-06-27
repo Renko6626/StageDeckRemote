@@ -1,0 +1,142 @@
+name: Release
+
+# 触发:推 v*.*.* 这样的 tag(scripts/release.sh 在本地 bump 版本号 +
+# 打 tag 之后,跑 git push --tags 就启动这套)
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# release 流程不要被自己 cancel 掉
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 创建 release + 上传产物需要
+
+jobs:
+  # ── Job 1: Windows 上跑 Tauri build,出 NSIS 安装包 ──
+  build-installer:
+    name: Build Windows NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./ -> target"
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Tauri build (NSIS only)
+        run: pnpm tauri build --bundles nsis
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: target/release/bundle/nsis/StageDeck Remote_*_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Job 2: Linux 上跑 cargo build 出 relay 二进制 ──
+  build-relay:
+    name: Build Linux relay binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build relay (release)
+        run: cargo build --release -p relay
+
+      - name: Read relay version
+        id: relay_ver
+        run: |
+          VER=$(sed -n '3s/^version = "\([^"]*\)"$/\1/p' crates/relay/Cargo.toml)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Rename for upload
+        run: |
+          mkdir -p staging
+          cp target/release/relay "staging/stagedeck-relay-linux-x86_64-${{ steps.relay_ver.outputs.version }}"
+
+      - name: Upload relay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-relay
+          path: staging/stagedeck-relay-linux-x86_64-*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Job 3: 抓 CHANGELOG 对应版本 section,创建 draft release,挂两个产物 ──
+  publish-release:
+    name: Publish draft release with both artifacts
+    needs: [build-installer, build-relay]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: artifacts/installer
+
+      - name: Download relay artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-relay
+          path: artifacts/relay
+
+      - name: Extract CHANGELOG section for this version
+        id: changelog
+        run: |
+          chmod +x scripts/extract-changelog.sh
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="release-notes.md"
+          if scripts/extract-changelog.sh "$VERSION" > "$NOTES_FILE" 2>/dev/null && [ -s "$NOTES_FILE" ]; then
+            echo "✓ CHANGELOG section found for $VERSION"
+          else
+            echo "⚠ no CHANGELOG section for $VERSION, falling back to generic note" >&2
+            printf '## %s\n\nSee CHANGELOG.md for details.\n' "$VERSION" > "$NOTES_FILE"
+          fi
+          cat "$NOTES_FILE"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release with both artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: StageDeck Remote ${{ github.ref_name }}
+          body_path: ${{ steps.changelog.outputs.notes_file }}
+          draft: true # 给你校最终文案 / 加截图的机会
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/installer/StageDeck Remote_*_x64-setup.exe
+            artifacts/relay/stagedeck-relay-linux-x86_64-*
