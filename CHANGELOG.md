@@ -3,10 +3,12 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
-## [Unreleased]
+## [0.2.1] — 2026-06-27 · 导播 GUI 双模式
 
-- **重构**:导播 GUI 改 Setup/Live 双模式布局。顶栏加 `[Setup] [Live]` 切换;Setup 模式 rail 装 setup-class widget(选窗 / QR / 测试翻页 / 小型紧急锁);Live 模式 rail 装 live-class widget(大字计时 / 快捷消息 / 巨型紧急锁)。切换是纯前端 UI,不动主持人 ARM/lock/token。顺手把 LocalControlPanel 三合一 blob 拆开:远控 toggle → StatusBar,紧急锁 → EmergencyLock(带 size prop),本地翻页 → LocalNav(改名)。ControlStatus 也并入 StatusBar。新增 vitest + 38 个 Vue 组件单测。
-  spec: [`docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md`](docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md)
+- **重构**:导播 GUI 改 Setup/Live 双模式布局。顶栏加 `[Setup] [Live]` 切换;Setup 模式 rail 装 setup-class widget(选窗 / QR / 测试翻页 / 小型紧急锁);Live 模式 rail 装 live-class widget(大字计时 / 快捷消息 / 巨型紧急锁)。切换是纯前端 UI,不动主持人 ARM/lock/token,localStorage 也不持久化模式(冷启动总在 Setup)。
+- **拆分**:`LocalControlPanel` 三合一 blob 拆开 —— 远控 toggle → `StatusBar`,紧急锁 → `EmergencyLock`(带 `size: "small" | "large"` prop),本地翻页 → `LocalNav`(改名)。`ControlStatus` 也并入 `StatusBar`。每个组件单一职责,可独立测。
+- **测试基础设施**:引入 `vitest` + `@vue/test-utils` + `jsdom` + `@pinia/testing`。新增 39 个 Vue 组件单测覆盖 EmergencyLock(6)/ StatusBar(15)/ LocalNav(4)/ DirectorView(12)+ smoke(2)。Tauri IPC 在测试环境下全部模块级 mock。
+- 见 [`docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md`](docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md)。
 
 ## [0.2.0] — 2026-06-25 · Relay 架构
 
