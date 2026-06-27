@@ -639,8 +639,13 @@ stagedeck-remote/
 │   ├── components/
 │   │   ├── WindowPicker.vue
 │   │   ├── QrCodePanel.vue
-│   │   ├── ControlStatus.vue
-│   │   ├── LocalControlPanel.vue
+│   │   ├── StatusBar.vue
+│   │   ├── EmergencyLock.vue
+│   │   ├── LocalNav.vue
+│   │   ├── DirectorTimer.vue
+│   │   ├── DirectorMessages.vue
+│   │   ├── DirectorPreview.vue
+│   │   ├── SettingsModal.vue
 │   │   └── LogPanel.vue
 │   ├── presenter/
 │   │   ├── presenter.html
@@ -869,18 +874,21 @@ NetworkStatus
 - 显示端口
 - 显示二维码
 
-ControlStatus
+StatusBar
 - 主持人连接状态
 - 延迟
 - 控制锁状态
+- 远控 toggle
 
-LocalControlPanel
+EmergencyLock
+- 强制锁定按钮（支持小/大两种尺寸）
+
+LocalNav
 - 下一页
 - 上一页
-- 黑屏
-- 恢复
-- 强制锁定
-- 允许 / 禁止远程控制
+
+DirectorTimer / DirectorMessages / DirectorPreview
+- Live 模式显示内容
 
 LogPanel
 - 最近操作日志

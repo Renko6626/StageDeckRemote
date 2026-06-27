@@ -3,6 +3,11 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [Unreleased]
+
+- **重构**:导播 GUI 改 Setup/Live 双模式布局。顶栏加 `[Setup] [Live]` 切换;Setup 模式 rail 装 setup-class widget(选窗 / QR / 测试翻页 / 小型紧急锁);Live 模式 rail 装 live-class widget(大字计时 / 快捷消息 / 巨型紧急锁)。切换是纯前端 UI,不动主持人 ARM/lock/token。顺手把 LocalControlPanel 三合一 blob 拆开:远控 toggle → StatusBar,紧急锁 → EmergencyLock(带 size prop),本地翻页 → LocalNav(改名)。ControlStatus 也并入 StatusBar。新增 vitest + 38 个 Vue 组件单测。
+  spec: [`docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md`](docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md)
+
 ## [0.2.0] — 2026-06-25 · Relay 架构
 
 - **新增**:Relay 模式作为 LAN 直连之外的备选传输路径(校园网内中继)。

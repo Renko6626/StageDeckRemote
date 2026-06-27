@@ -1,20 +1,43 @@
 <script setup lang="ts">
-// 控制状态总览（spec §6.1.3 / §12.1）。
-import { computed } from "vue";
+// 控制状态总览 + 远控 toggle + 释放控制权 按钮。
+//
+// mode prop 控制远控 toggle 的视觉权重:
+//   setup — toggle 是 Setup 阶段主操作,放大
+//   live  — toggle 在 Live 阶段不应该动,缩成小行
+import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useAppState } from "../stores/appState";
 import { useNetworkState } from "../stores/networkState";
 
+defineProps<{ mode: "setup" | "live" }>();
+
 const app = useAppState();
 const net = useNetworkState();
-const { remoteEnabled, controlLocked, presenterUnlocked, selectedWindow, activeClientId, presenterOnline } =
-  storeToRefs(app);
+const {
+  remoteEnabled,
+  controlLocked,
+  presenterUnlocked,
+  selectedWindow,
+  activeClientId,
+  presenterOnline,
+} = storeToRefs(app);
 const { online } = storeToRefs(net);
 
 const canControl = computed(
   () => remoteEnabled.value && !controlLocked.value && presenterUnlocked.value
 );
+
+const lastError = ref<string | null>(null);
+
+async function toggleRemote() {
+  lastError.value = null;
+  try {
+    await app.setRemoteEnabled(!remoteEnabled.value);
+  } catch (e) {
+    lastError.value = String(e);
+  }
+}
 </script>
 
 <template>
@@ -59,24 +82,39 @@ const canControl = computed(
         <span class="k">当前控制端</span>
         <span class="v">{{ activeClientId ? activeClientId.slice(0, 6) : "—" }}</span>
       </li>
-      <li class="release-row">
-        <button class="release" :disabled="!activeClientId" @click="app.releaseController()">
-          释放控制权
-        </button>
-      </li>
     </ul>
+
+    <button
+      data-test="remote-toggle"
+      :data-mode="$props.mode"
+      :class="{ on: remoteEnabled }"
+      class="remote"
+      @click="toggleRemote"
+    >
+      远程控制:{{ remoteEnabled ? "已开启" : "已关闭" }}
+    </button>
+
+    <button
+      data-test="release"
+      class="release"
+      :disabled="!activeClientId"
+      @click="app.releaseController()"
+    >
+      释放控制权
+    </button>
+
+    <p v-if="lastError" class="error">{{ lastError }}</p>
   </section>
 </template>
 
 <style scoped>
 .status {
   list-style: none;
-  margin: 0;
+  margin: 0 0 10px;
   padding: 0;
   display: grid;
   gap: 0;
 }
-
 .status li {
   display: flex;
   justify-content: space-between;
@@ -85,11 +123,9 @@ const canControl = computed(
   border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
-
 .status li:last-child {
   border-bottom: none;
 }
-
 .k {
   font-family: var(--mono);
   font-size: 10px;
@@ -97,32 +133,45 @@ const canControl = computed(
   text-transform: uppercase;
   color: var(--ink-faint);
 }
-
 .v {
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.08em;
   color: var(--ink-dim);
 }
-
-/* ok = white (active/connected/enabled) */
 .v.ok {
   color: var(--ink);
 }
-
-/* bad = danger red (locked/disconnected) — only for hard-danger states */
 .v.bad {
   color: var(--danger);
 }
-
-/* warn = dim (not yet active but not dangerous) */
 .v.warn {
   color: var(--ink-dim);
 }
-.release-row {
-  border-bottom: none;
-  padding-top: 8px;
+
+.remote {
+  width: 100%;
+  font-family: var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 8px;
 }
+.remote[data-mode="setup"] {
+  padding: 11px 12px;
+  font-size: 11px;
+}
+.remote[data-mode="live"] {
+  padding: 7px 10px;
+  font-size: 10px;
+  opacity: 0.85;
+}
+.remote.on {
+  background: var(--ink);
+  color: #000;
+  border-color: var(--ink);
+}
+
 .release {
   width: 100%;
   font-family: var(--mono);
@@ -134,5 +183,13 @@ const canControl = computed(
 .release:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.error {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
+  word-break: break-all;
 }
 </style>
