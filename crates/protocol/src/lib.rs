@@ -4,6 +4,20 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u8 = 1;
 
+use std::time::{Duration, Instant};
+
+/// Relay → 导播心跳间隔(控制 WS 发 JSON Ping,推流 WS 发协议层 Ping)。
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+/// 读侧存活超时:超过这么久没有任何入站消息即判半开,主动断开重连。
+pub const LIVENESS_TIMEOUT: Duration = Duration::from_secs(25);
+/// WS 握手(含 TCP 连接)超时,防黑洞网络下挂一两分钟。
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// 距最近一次入站消息是否已超过存活超时。纯函数,两端共用。
+pub fn liveness_expired(last_inbound: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_inbound) > LIVENESS_TIMEOUT
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum ControlMessage {
@@ -77,6 +91,16 @@ mod tests {
         let s = serde_json::to_string(&resp).unwrap();
         let back: ControlMessage = serde_json::from_str(&s).unwrap();
         assert_eq!(back, resp);
+    }
+
+    #[test]
+    fn liveness_expires_only_past_timeout() {
+        let t0 = Instant::now();
+        assert!(!liveness_expired(t0, t0));
+        assert!(!liveness_expired(t0, t0 + LIVENESS_TIMEOUT));
+        assert!(liveness_expired(t0, t0 + LIVENESS_TIMEOUT + Duration::from_millis(1)));
+        // 时钟倒退(now < last)不算过期
+        assert!(!liveness_expired(t0 + Duration::from_secs(5), t0));
     }
 
     #[test]

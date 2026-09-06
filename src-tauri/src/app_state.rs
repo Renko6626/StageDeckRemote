@@ -123,6 +123,8 @@ pub struct Inner {
     pub director_message: Option<DirectorMessage>,
     /// 演出计时器(临时;两端轮询 status 取走显示)。
     pub timer: Option<TimerState>,
+    /// 动作请求幂等缓存(手机重发同 op_id 只执行一次)。
+    pub ops: crate::op_cache::OpCache,
 }
 
 pub struct AppState {
@@ -169,6 +171,7 @@ impl AppState {
                 presets: crate::presets::default_presets(),
                 director_message: None,
                 timer: None,
+                ops: crate::op_cache::OpCache::new(),
             }),
             capture: crate::capture::CaptureManager::new(),
             message_tx,
@@ -195,7 +198,8 @@ impl AppState {
 }
 
 /// 客户端在线判定阈值(>该值无心跳视为离线)。
-pub const PRESENCE_TIMEOUT_MS: u64 = 4000;
+/// 10s:与手机端"弱"档对称,一次 Wi‑Fi 抖动不丢控制权;代价是第二台手机接管要等 10s。
+pub const PRESENCE_TIMEOUT_MS: u64 = 10_000;
 
 /// 最近一次心跳是否仍算在线。纯函数。
 pub fn client_online(last_seen_ms: u64, now_ms: u64) -> bool {
@@ -219,6 +223,11 @@ pub fn note_presence_and_claim(inner: &mut Inner, cid: &str, now_ms: u64) -> boo
 /// 控制端当前是否在线。
 pub fn controller_online(inner: &Inner, now_ms: u64) -> bool {
     inner.active_client_id.is_some() && client_online(inner.active_seen_ms, now_ms)
+}
+
+/// 控制端最近一次心跳距今毫秒;从未有控制端则 None。导播 GUI 用它显示"弱 · Ns 前"。
+pub fn controller_seen_ms_ago(inner: &Inner, now_ms: u64) -> Option<u64> {
+    inner.active_client_id.as_ref().map(|_| now_ms.saturating_sub(inner.active_seen_ms))
 }
 
 #[cfg(test)]
@@ -278,6 +287,23 @@ mod tests {
         // A 超时离线后 B 轮询 → 接管
         assert!(note_presence_and_claim(&mut i, "B", 2000 + PRESENCE_TIMEOUT_MS + 1));
         assert_eq!(i.active_client_id.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn presence_timeout_is_ten_seconds() {
+        assert_eq!(PRESENCE_TIMEOUT_MS, 10_000);
+    }
+
+    #[test]
+    fn controller_seen_ms_ago_tracks_last_heartbeat() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        let st = AppState::new("t".into(), 0, tx);
+        let mut i = st.lock();
+        assert_eq!(controller_seen_ms_ago(&i, 5000), None);
+        note_presence_and_claim(&mut i, "A", 1000);
+        assert_eq!(controller_seen_ms_ago(&i, 4500), Some(3500));
+        // 时钟回拨不出现负数
+        assert_eq!(controller_seen_ms_ago(&i, 500), Some(0));
     }
 
     #[test]
