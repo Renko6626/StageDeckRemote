@@ -79,7 +79,8 @@ impl Backoff {
 
 pub(crate) async fn control_loop(state: Arc<AppState>, router: Arc<axum::Router>, cfg: RelayConfig) {
     let mut backoff = Backoff::new();
-    let mut attempts: u64 = 0;
+    let mut attempts: u64 = 0; // 自上次成功以来的尝试次数
+    let mut ever_connected = false;
     loop {
         attempts += 1;
         *state.relay_status.lock().unwrap() = RelayStatus::Connecting;
@@ -173,12 +174,13 @@ pub(crate) async fn control_loop(state: Arc<AppState>, router: Arc<axum::Router>
                             *state.relay_status.lock().unwrap() = RelayStatus::Connected;
                             log::event(
                                 &state,
-                                if attempts == 1 {
-                                    "Relay 控制通道已连接".to_string()
-                                } else {
+                                if ever_connected {
                                     format!("Relay 控制通道已重连（第 {} 次尝试）", attempts)
+                                } else {
+                                    "Relay 控制通道已连接".to_string()
                                 },
                             );
+                            ever_connected = true;
                             attempts = 0;
                         }
                         ControlMessage::ServerHello { ok: false, reason } => {
@@ -413,6 +415,29 @@ mod tests {
             }
         });
         (addr, conns)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn control_loop_logs_reconnect_after_relay_closes() {
+        // mock relay 握手后立刻关连接(silent=false 分支:任务结束 → socket drop)。
+        let (addr, conns) = mock_relay(false).await;
+        let state = test_state();
+        let cfg = RelayConfig { base_url: format!("ws://{addr}"), session_id: "T-2".into(), secret: "s".into() };
+        let task = tokio::spawn(control_loop(state.clone(), Arc::new(axum::Router::new()), cfg));
+        // 暂停时钟下 sleep 会瞬间跳过,所以不能"睡一会再看",要轮询日志直到出现重连记录。
+        let has_reconnect = |state: &AppState| {
+            log::recent(state, 100).iter().any(|e| e.message.starts_with("Relay 控制通道已重连（第"))
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        while !has_reconnect(&state) {
+            assert!(tokio::time::Instant::now() < deadline, "director never reconnected");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        task.abort();
+        assert!(conns.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        let logs: Vec<String> = log::recent(&state, 100).into_iter().map(|e| e.message).collect();
+        assert!(logs.iter().any(|m| m == "Relay 控制通道已连接"), "{logs:?}");
+        assert!(logs.iter().any(|m| m.contains("后重连")), "{logs:?}");
     }
 
     #[tokio::test(start_paused = true)]
