@@ -12,6 +12,9 @@
   }
   var POLL = 900; // ms status + slide_state cadence
   var SLOW_POLL = 4000; // ms back-off cadence after a 401 (token changed)
+  // Relay waits up to 30s for its tunnel response. A status heartbeat must allow
+  // that budget instead of being cancelled by the generic request timeout.
+  var STATUS_TIMEOUT = 35000;
 
   var el = {
     connDot: document.getElementById("conn-dot"),
@@ -62,7 +65,7 @@
   };
   var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
-  function api(path, body) {
+  function api(path, body, timeoutMs) {
     var opts = body
       ? {
           method: "POST",
@@ -72,7 +75,8 @@
       : { method: "GET" };
     var controller = new AbortController();
     opts.signal = controller.signal;
-    var timeout = setTimeout(function () { controller.abort(); }, body ? 12000 : 5000);
+    if (timeoutMs === undefined) timeoutMs = body ? 12000 : 5000;
+    var timeout = setTimeout(function () { controller.abort(); }, timeoutMs);
     return fetch(path, opts).finally(function () { clearTimeout(timeout); });
   }
 
@@ -181,7 +185,7 @@
     if (statusPending) return;
     statusPending = true;
     var t0 = Date.now();
-    api("api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401)
+    api("api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid), null, STATUS_TIMEOUT).then(handle401)
       .then(function (r) {
         if (!r) return;
         if (!r.ok) throw new Error("status HTTP " + r.status);

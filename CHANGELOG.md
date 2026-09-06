@@ -3,6 +3,12 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.2.3] - 2026-09-06
+
+### Fixed
+
+- 主持人状态心跳的等待时间延长至 35 秒，与 Relay 的 30 秒隧道超时一致，避免手机在 Relay 或短暂网络抖动时于第 5 秒主动断开。
+
 ## [0.2.2] - 2026-09-06
 
 ### Fixed

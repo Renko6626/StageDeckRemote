@@ -4,14 +4,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-function mountPresenter(slideResponse: () => Promise<Response>) {
+function mountPresenter(
+  slideResponse: () => Promise<Response>,
+  statusResponse = () => Promise.resolve(new Response(JSON.stringify({
+    remote_enabled: true, control_locked: false, presenter_unlocked: true,
+    is_controller: true,
+  }), { status: 200 })),
+) {
   document.documentElement.innerHTML = html;
   vi.stubGlobal('fetch', vi.fn((url: string) => {
     if (url.includes('slide_state')) return slideResponse();
-    return Promise.resolve(new Response(JSON.stringify({
-      remote_enabled: true, control_locked: false, presenter_unlocked: true,
-      is_controller: true,
-    }), { status: 200 }));
+    return statusResponse();
   }));
   window.eval(script);
 }
@@ -21,6 +24,22 @@ it('keeps the heartbeat online while PowerPoint status is blocked', async () => 
   mountPresenter(() => new Promise(() => {}));
   await vi.advanceTimersByTimeAsync(100);
   expect(document.getElementById('conn-text')?.textContent).toBe('LINK');
+});
+
+it('allows a slow Relay status heartbeat through its 30-second server timeout', async () => {
+  vi.useFakeTimers();
+  let signal: AbortSignal | undefined;
+  document.documentElement.innerHTML = html;
+  vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => {
+    if (url.includes('slide_state')) {
+      return Promise.resolve(new Response(JSON.stringify({ available: false, actions: [] })));
+    }
+    signal = options.signal as AbortSignal;
+    return new Promise<Response>(() => {});
+  }));
+  window.eval(script);
+  await vi.advanceTimersByTimeAsync(31000);
+  expect(signal?.aborted).toBe(false);
 });
 
 it('distinguishes a busy PowerPoint from a lost connection', async () => {
