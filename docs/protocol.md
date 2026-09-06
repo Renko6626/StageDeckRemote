@@ -33,7 +33,11 @@
 - **请求体**：POST 一律 `Content-Type: application/json`，64 KiB 上限（LAN 的 `DefaultBodyLimit` 与 Relay 隧道两端一致）。
 - **响应体**：除截图(二进制 JPEG)、MJPEG 流、页面/静态资源外，均为 JSON。
 - **单控制端**：所有动作端点（点击/翻页/黑屏/恢复/宏/锁/解锁/消息）额外要求请求体 `client_id` 等于
-  `active_client_id`（先到为主、控制端 >4s 无心跳后可被接管）。
+  `active_client_id`（先到为主、控制端 >10s 无心跳后可被接管；v0.2.4 起由 4s 放宽，一次 Wi‑Fi 抖动不丢控制权）。
+- **幂等 `op_id`**（v0.2.4+）：六个动作端点（`click`/`next`/`prev`/`black`/`restore`/`action`）的请求体可带
+  `"op_id": "<client_id>-<seq>"`。服务端保留最近 64 条、60s 内的结果：同 `op_id` 已执行完 → 原样回放上次响应；
+  仍在执行 → `409 op_in_flight`。不带 `op_id` 行为不变。**门控失败（401/403）不进缓存**，解锁后同 id 可再执行。
+  手机端在网络错误 / 超时 / 502 / 503 时用同一 `op_id` 重发（最多 3 次），任何其它状态码都视为"已送达"停止重发。
 
 ### 1.3 信任与三层锁
 
@@ -250,6 +254,7 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 | 403 | `control_locked` | 三层锁未放行（动作类） |
 | 403 | `remote_disabled` | unlock 时远程未开启或被强制锁 |
 | 409 | `ppt_window_not_found` | 未选中目标窗口 |
+| 409 | `op_in_flight` | 同 `op_id` 的请求仍在执行（重发到得太快）；已送达，勿再重发 |
 | 500 | `input_failed` / `black_failed` / `action_failed` / `action_panicked` | 后端执行失败 |
 
 ### 3.1 Relay 模式额外错误码
@@ -261,8 +266,10 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 | 401 | `invalid_token` | relay 边缘 token 校验未过 |
 | 413 | `body_too_large` | 请求体超过 64 KiB |
 | 502 | `session_unavailable` | 该 `session_id` 没有活跃的导播 WS |
-| 502 | `director_offline` | 导播 WS 已断、消息推不出去 |
-| 504 | `tunnel_timeout` | 隧道往返超过 30s |
+| 502 | `director_offline` | 导播 WS 已断、消息推不出去；或等待期间导播被判半开 / 被新连接接管，pending 请求被立即失败（v0.2.4+） |
+| 504 | `tunnel_timeout` | 隧道往返超过 30s（导播在线但迟迟不回,典型是 VBA 弹窗） |
+
+**存活探测（v0.2.4+）**：relay 每 10s 向导播控制 WS 发 JSON `Ping{nonce}`、向推流 WS 发协议层 Ping；任一方向 25s 没有任何入站帧即判半开、主动断开。导播侧同样 25s 读超时 + 8s 握手超时后走退避重连（0.5→5s + 抖动）。这些常量固定在 `protocol` crate，不进 relay 配置。
 
 ---
 

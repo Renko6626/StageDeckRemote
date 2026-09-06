@@ -3,6 +3,25 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.2.4] - 2026-09-07 · 糟糕网络下的控制可靠性
+
+### Added
+
+- 动作接口（翻页 / 黑屏 / 恢复 / 宏 / 点击）支持幂等 `op_id`：服务端 60s 内同 id 只执行一次，已完成的原样回放，仍在执行的回 `409 op_in_flight`。命中写导播日志"已去重"。
+- 手机端 `sendOp`：网络错误 / 超时 / 502 / 503 时用同一 `op_id` 自动重发（前两次 1.5s 快试，第三次等完整结果）；发送期间所有动作按钮禁用并显示"…"；预算耗尽提示"未送达或结果未知，核对页码后再按"。
+- 手机连接状态三档：`LINK` / `弱 · Ns`（黄点，按钮可用）/ `DOWN`（LAN 8s、Relay 15s）。
+- Relay ↔ 导播存活探测：relay 每 10s 发 Ping（控制 WS 用 JSON、推流 WS 用协议层帧），任一方向 25s 无入站即判半开断开；导播握手 8s 超时。常量固定在 `protocol` crate，relay 配置不加项。
+- 导播 StatusBar 主持人心跳三态（在线 / 弱 · Ns 前 / 离线）；Relay 连接、断开原因、退避写导播日志面板。
+
+### Changed
+
+- 手机 status 心跳超时从 35s 改回 5s，由"弱"档承担抖动缓冲。
+- 服务端控制端离线阈值 4s → 10s。
+- Relay 在导播断开或被新连接接管时立即清空等待中的隧道请求（`502 director_offline`），不再让手机等满 30s。
+- 导播推流 WS 循环改为同时读写，能收到 Close 帧并回应协议层 Ping。
+
+见 [`docs/superpowers/specs/2026-09-07-bad-network-resilience-design.md`](docs/superpowers/specs/2026-09-07-bad-network-resilience-design.md)。
+
 ## [0.2.3] - 2026-09-06
 
 ### Fixed
