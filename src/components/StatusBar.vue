@@ -21,11 +21,28 @@ const {
   selectedWindow,
   activeClientId,
   presenterOnline,
+  presenterSeenMsAgo,
 } = storeToRefs(app);
 const { online } = storeToRefs(net);
 
 const canControl = computed(
   () => remoteEnabled.value && !controlLocked.value && presenterUnlocked.value
+);
+
+// 主持人心跳三态,与手机端 LINK/弱/DOWN 对称:≤3s 在线;3–10s 弱(服务端 10s 才判离线);>10s 离线。
+const PRESENTER_WEAK_MS = 3000;
+const presenterTier = computed<"online" | "weak" | "offline">(() => {
+  if (!presenterOnline.value) return "offline";
+  const age = presenterSeenMsAgo.value;
+  return age != null && age > PRESENTER_WEAK_MS ? "weak" : "online";
+});
+const presenterText = computed(() => {
+  if (presenterTier.value === "offline") return "离线";
+  if (presenterTier.value === "weak") return `弱 · ${Math.floor((presenterSeenMsAgo.value ?? 0) / 1000)}s 前`;
+  return "在线";
+});
+const presenterClass = computed(() =>
+  presenterTier.value === "online" ? "ok" : presenterTier.value === "weak" ? "warn" : "bad"
 );
 
 const lastError = ref<string | null>(null);
@@ -74,8 +91,8 @@ async function toggleRemote() {
       </li>
       <li>
         <span class="k">主持人</span>
-        <span class="v" :class="presenterOnline ? 'ok' : 'bad'">
-          {{ presenterOnline ? "在线" : "离线" }}
+        <span class="v" data-test="presenter-presence" :class="presenterClass">
+          {{ presenterText }}
         </span>
       </li>
       <li>

@@ -14,6 +14,7 @@ function mountSb(
     selectedWindow: { hwnd: number; title: string } | null;
     activeClientId: string | null;
     presenterOnline: boolean;
+    presenterSeenMsAgo: number | null;
   }> = {},
   net: Partial<{ online: boolean }> = {}
 ) {
@@ -27,6 +28,7 @@ function mountSb(
         selectedWindow: null,
         activeClientId: null,
         presenterOnline: false,
+        presenterSeenMsAgo: null,
         ...state,
       },
       network: { online: true, ...net },
@@ -35,6 +37,33 @@ function mountSb(
   });
   return mount(StatusBar, { props, global: { plugins: [pinia] } });
 }
+
+describe("StatusBar — presenter presence tiers", () => {
+  const presence = (w: ReturnType<typeof mountSb>) => w.find('[data-test="presenter-presence"]');
+
+  it("shows 在线 with ok class when heartbeat is fresh", () => {
+    const w = mountSb({ mode: "live" }, { presenterOnline: true, presenterSeenMsAgo: 800 });
+    expect(presence(w).text()).toBe("在线");
+    expect(presence(w).classes()).toContain("ok");
+  });
+
+  it("shows 弱 · Ns 前 with warn class between 3s and 10s", () => {
+    const w = mountSb({ mode: "live" }, { presenterOnline: true, presenterSeenMsAgo: 6400 });
+    expect(presence(w).text()).toBe("弱 · 6s 前");
+    expect(presence(w).classes()).toContain("warn");
+  });
+
+  it("shows 离线 with bad class once the server reports offline", () => {
+    const w = mountSb({ mode: "live" }, { presenterOnline: false, presenterSeenMsAgo: 12000 });
+    expect(presence(w).text()).toBe("离线");
+    expect(presence(w).classes()).toContain("bad");
+  });
+
+  it("shows 离线 when no presenter ever connected", () => {
+    const w = mountSb({ mode: "live" }, { presenterOnline: false, presenterSeenMsAgo: null });
+    expect(presence(w).text()).toBe("离线");
+  });
+});
 
 describe("StatusBar — status display", () => {
   it("shows 运行中 when network online", () => {

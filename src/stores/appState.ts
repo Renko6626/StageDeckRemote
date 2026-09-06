@@ -14,6 +14,7 @@ export const useAppState = defineStore("app", () => {
   const logs = ref<LogEntry[]>([]);
   const timer = ref<TimerView | null>(null);
   const presenterOnline = ref(false);
+  const presenterSeenMsAgo = ref<number | null>(null);
 
   // Relay 状态
   const relayConfig = ref<RelayConfigDto | null>(null);
@@ -28,6 +29,7 @@ export const useAppState = defineStore("app", () => {
     activeClientId.value = s.active_client_id;
     timer.value = s.timer;
     presenterOnline.value = s.presenter_online;
+    presenterSeenMsAgo.value = s.presenter_seen_ms_ago ?? null;
     relayAccessUrl.value = s.relay_access_url ?? null;
 
     const net = useNetworkState();
@@ -128,6 +130,7 @@ export const useAppState = defineStore("app", () => {
     timerToggle,
     timerReset,
     presenterOnline,
+    presenterSeenMsAgo,
     releaseController,
     regenerateToken,
     setServerPort,
