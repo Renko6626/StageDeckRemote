@@ -3,7 +3,7 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
-## [0.2.4] - 2026-09-07 · 糟糕网络下的控制可靠性
+## [0.2.5] - 2026-09-07 · 糟糕网络下的控制可靠性
 
 ### Added
 
