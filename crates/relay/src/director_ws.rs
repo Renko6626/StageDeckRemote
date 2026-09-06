@@ -5,7 +5,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
-use protocol::ControlMessage;
+use protocol::{ControlMessage, HEARTBEAT_INTERVAL, LIVENESS_TIMEOUT};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -58,7 +58,7 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     }
     // 3. Register or take over existing session.
     let (tx, mut rx) = mpsc::unbounded_channel::<ControlMessage>();
-    let sess = match ctx.sessions.register_or_attach(sid.clone(), secret, token, tx).await {
+    let sess = match ctx.sessions.register_or_attach(sid.clone(), secret, token, tx.clone()).await {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(sid = %sid, reason = %e, "control ws rejected by session table");
@@ -84,23 +84,51 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
             }
         }
     });
+    // 4b. Pinger: every HEARTBEAT_INTERVAL push a JSON Ping through the same writer,
+    //     so the director always has something inbound to prove the link alive.
+    let pinger = {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let mut nonce: u64 = 0;
+            loop {
+                tokio::time::sleep(HEARTBEAT_INTERVAL).await;
+                nonce += 1;
+                if tx.send(ControlMessage::Ping { nonce }).is_err() {
+                    break;
+                }
+            }
+        })
+    };
     // 5. Reader: receive TunnelResp / TokenUpdate / Pong from the director.
-    while let Some(Ok(msg)) = stream.next().await {
-        match msg {
-            Message::Text(t) => {
+    //    Any inbound frame counts as liveness; LIVENESS_TIMEOUT of silence = half-open → drop.
+    let disconnect_reason = loop {
+        match tokio::time::timeout(LIVENESS_TIMEOUT, stream.next()).await {
+            Err(_) => break "liveness_timeout",
+            Ok(Some(Ok(Message::Text(t)))) => {
                 let Ok(m): Result<ControlMessage, _> = serde_json::from_str(&t) else {
                     continue;
                 };
                 handle_director_msg(&sess, m).await;
             }
-            Message::Close(_) => break,
-            _ => {}
+            Ok(Some(Ok(Message::Close(_)))) => break "close_frame",
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) => break "ws_error",
+            Ok(None) => break "eof",
         }
-    }
-    // 6. Director disconnected; update last_seen and let the grace-period cleaner handle teardown.
-    *sess.last_seen.lock().await = Instant::now();
-    tracing::info!(sid = %sid, "control ws disconnected");
+    };
+    // 6. Director disconnected: stop writer/pinger, fail requests still waiting on THIS
+    //    connection, update last_seen and let the grace-period reaper handle teardown.
     writer.abort();
+    pinger.abort();
+    // 只有当 session 的 control_tx 仍指向本连接(已随 writer 退出而关闭)时才清 pending;
+    // 若新连接已接管,pending 里是新连接的请求,不能动。
+    let dropped = if sess.control_tx.lock().await.is_closed() {
+        sess.fail_pending().await
+    } else {
+        0
+    };
+    *sess.last_seen.lock().await = Instant::now();
+    tracing::info!(sid = %sid, reason = disconnect_reason, dropped_pending = dropped, "control ws disconnected");
 }
 
 async fn handle_director_msg(sess: &crate::session::Session, m: ControlMessage) {
@@ -150,21 +178,37 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     // Mark stream connected for admin status; clear when this loop exits.
     sess.stream_connected.store(true, std::sync::atomic::Ordering::SeqCst);
     tracing::info!(sid = %sid, "stream ws connected");
+    // Protocol-level Ping every HEARTBEAT_INTERVAL; tungstenite on the director auto-Pongs,
+    // and that Pong (or any frame) resets the liveness clock below.
+    let (mut sink, mut stream) = socket.split();
+    let pinger = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(HEARTBEAT_INTERVAL).await;
+            if sink.send(Message::Ping(Vec::new())).await.is_err() {
+                break;
+            }
+        }
+    });
     // Receive binary frames and broadcast via watch channel.
-    while let Some(Ok(msg)) = socket.next().await {
-        match msg {
-            Message::Binary(b) => {
+    let disconnect_reason = loop {
+        match tokio::time::timeout(LIVENESS_TIMEOUT, stream.next()).await {
+            Err(_) => break "liveness_timeout",
+            Ok(Some(Ok(Message::Binary(b)))) => {
                 let _ = sess.frame_tx.send(Arc::new(b));
                 sess.frames_pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 *sess.frame_last_at.lock().await = Some(std::time::Instant::now());
             }
-            Message::Close(_) => break,
-            _ => {}
+            Ok(Some(Ok(Message::Close(_)))) => break "close_frame",
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) => break "ws_error",
+            Ok(None) => break "eof",
         }
-    }
+    };
+    pinger.abort();
     sess.stream_connected.store(false, std::sync::atomic::Ordering::SeqCst);
     tracing::info!(
         sid = %sid,
+        reason = disconnect_reason,
         total_frames = sess.frames_pushed.load(std::sync::atomic::Ordering::Relaxed),
         "stream ws disconnected"
     );

@@ -16,6 +16,7 @@ mod log;
 #[cfg(any(windows, test))]
 mod macro_execution;
 mod network;
+mod op_cache;
 mod ppt_com;
 mod presets;
 mod relay_client;

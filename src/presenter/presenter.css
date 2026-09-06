@@ -100,6 +100,18 @@ body::before {
 .dot.online {
   background: var(--ink);
 }
+.dot.weak {
+  background: #f5b400;
+  box-shadow: 0 0 6px #f5b400;
+}
+.sending {
+  opacity: 0.55;
+}
+.d-next.sending .tx::after,
+.d-btn.sending::after,
+.act.sending::after {
+  content: " …";
+}
 
 /* ─── mode switch ─── */
 .modeswitch {

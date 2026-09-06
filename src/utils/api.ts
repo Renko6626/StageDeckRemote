@@ -23,6 +23,8 @@ export interface DirectorStatus {
   access_url: string | null;
   timer: TimerView | null;
   presenter_online: boolean;
+  /** 控制端最近一次心跳距今毫秒;从未有控制端则 null。 */
+  presenter_seen_ms_ago: number | null;
   relay_access_url: string | null;
 }
 

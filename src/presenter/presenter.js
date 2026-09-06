@@ -12,9 +12,18 @@
   }
   var POLL = 900; // ms status + slide_state cadence
   var SLOW_POLL = 4000; // ms back-off cadence after a 401 (token changed)
-  // Relay waits up to 30s for its tunnel response. A status heartbeat must allow
-  // that budget instead of being cancelled by the generic request timeout.
-  var STATUS_TIMEOUT = 35000;
+  var STATUS_TIMEOUT = 5000; // ms per heartbeat; "弱" tier absorbs jitter instead of a long timeout
+  // 连接三档(spec 2026-09-07 §三):距最近一次心跳成功多久。
+  var LINK_MS = 3000; // ≤3s → LINK
+  // Relay 多一跳,DOWN 阈值放宽。模式只看 <base href> 是否是 /r/<sid>/ 形式。
+  var IS_RELAY = /\/r\/[^/]+\//.test(document.baseURI);
+  var DOWN_MS = IS_RELAY ? 15000 : 8000; // 超过 → DOWN
+  var TIER_TICK = 500; // ms 本地 tick,心跳失败时没有回调来触发 render
+  // 动作重试(spec §二):前两次 1.5s 快试,最后一次等完整结果。
+  var OP_FAST_MS = 1500;
+  var OP_MAX_ATTEMPTS = 3;
+  var OP_FINAL_PAGE_MS = 5000; // 翻页 / 黑屏 / 点击
+  var OP_FINAL_ACTION_MS = 12000; // 宏(VBA 可能慢)
 
   var el = {
     connDot: document.getElementById("conn-dot"),
@@ -49,8 +58,9 @@
   };
 
   var state = {
-    online: false,
-    connecting: true,
+    online: false, // 派生:tier 为 link / weak
+    lastOkAt: 0, // 最近一次 status 成功时刻;0 = 还没成功过
+    everFailed: false, // 首次失败前显示 LINK…,之后按 age 分档
     tokenInvalid: false,
     allowed: false, // remote_enabled && !control_locked
     unlocked: false, // presenter_unlocked
@@ -82,19 +92,40 @@
 
   // ── gating ──（主持人侧一切操作都需 ARM 解锁)
   function canAct() {
-    return state.online && state.allowed && state.unlocked && state.isController && !state.actionPending && !state.com.busy;
+    var t = tier();
+    return (t === "link" || t === "weak") && state.allowed && state.unlocked && state.isController && !state.actionPending && !state.com.busy;
   }
+
+  // ── connection tier: "connecting" | "link" | "weak" | "down" ──
+  function ageMs() {
+    return state.lastOkAt ? Date.now() - state.lastOkAt : Infinity;
+  }
+  function tier() {
+    if (state.tokenInvalid) return "down";
+    if (!state.lastOkAt) return state.everFailed ? "down" : "connecting";
+    var age = ageMs();
+    if (age <= LINK_MS) return "link";
+    if (age <= DOWN_MS) return "weak";
+    return "down";
+  }
+  var lastTier = null;
 
   // ── render: single DOM update point ──
   function render() {
-    el.connDot.classList.toggle("online", state.online);
+    var ct = tier();
+    lastTier = ct;
+    state.online = ct === "link" || ct === "weak";
+    el.connDot.classList.toggle("online", ct === "link");
+    el.connDot.classList.toggle("weak", ct === "weak");
     el.connText.textContent = state.tokenInvalid
       ? "TOKEN✗"
-      : state.online
+      : ct === "link"
         ? "LINK"
-        : state.connecting
-          ? "LINK…"
-          : "DOWN";
+        : ct === "weak"
+          ? "弱 · " + Math.floor(ageMs() / 1000) + "s"
+          : ct === "connecting"
+            ? "LINK…"
+            : "DOWN";
     el.latency.textContent = state.latency == null ? "--" : state.latency + "ms";
 
     var cur = state.com.current || 0;
@@ -193,8 +224,7 @@
       })
       .then(function (s) {
         if (!s) return;
-        state.online = true;
-        state.connecting = false;
+        state.lastOkAt = Date.now();
         state.tokenInvalid = false;
         setPollRate(POLL); // recovered: restore fast cadence
         if (state.tokenBanner) {
@@ -226,17 +256,22 @@
     }
     return r;
   }
+  // 一次心跳失败不立刻断线:档位由 lastOkAt 的年龄决定(弱 → DOWN),按钮在"弱"档仍可用,
+  // 靠 sendOp 的重试兜底。只有 token 失效是硬断。
   function setDown(tokenInvalid) {
-    state.online = false;
-    state.connecting = false;
-    state.unlocked = false;
-    state.isController = false;
-    state.allowed = false;
+    state.everFailed = true;
     state.latency = null;
-    state.tokenInvalid = !!tokenInvalid;
-    if (tokenInvalid) stopStream(); // token 失效后别让 <img> 继续重试 MJPEG
+    if (tokenInvalid) {
+      state.tokenInvalid = true;
+      state.lastOkAt = 0;
+      stopStream(); // token 失效后别让 <img> 继续重试 MJPEG
+    }
     render();
   }
+  // 本地 tick:心跳挂起/失败时没有回调,靠它把 LINK → 弱 → DOWN 画出来。
+  setInterval(function () {
+    if (tier() !== lastTier || lastTier === "weak") render(); // weak 档要刷新 "Ns"
+  }, TIER_TICK);
   function startPolling() {
     if (!state.statusTimer) state.statusTimer = setInterval(poll, state.pollRate);
   }
@@ -289,6 +324,8 @@
       handle401(r);
     } else if (r && r.status === 403) {
       flashNotice("已被锁定 / 已失去控制权");
+    } else if (r && r.status === 409 && r.reason === "op_in_flight") {
+      flashNotice("已送达，PPT 处理中；勿重复点击");
     } else if (r && !r.ok) {
       flashNotice(r.status === 504
         ? "执行超时，结果未知；请导播检查 PPT 弹窗，勿重复点击"
@@ -302,16 +339,63 @@
     showDirBanner(text, { persist: false });
   }
 
+  // ── idempotent action with retry (spec 2026-09-07 §二) ──
+  // 同一 op_id 最多发 OP_MAX_ATTEMPTS 次:前几次 OP_FAST_MS 超时,最后一次用 finalTimeoutMs 等完整结果。
+  // 重试条件:网络错误 / 超时 / 502 / 503。任何其它 HTTP 状态都是"已送达",不再重发。
+  // resolve 值:{ resp, reason } 或 { unknown: true };从不 reject。
+  var opSeq = 0;
+  function sendOp(path, body, finalTimeoutMs) {
+    var opId = cid + "-" + (++opSeq);
+    var payload = Object.assign({ op_id: opId }, body);
+    var attempt = 0;
+    return new Promise(function (resolve) {
+      function once() {
+        attempt++;
+        var isLast = attempt >= OP_MAX_ATTEMPTS;
+        api(path, payload, isLast ? finalTimeoutMs : OP_FAST_MS)
+          .then(function (r) {
+            if (!isLast && (r.status === 502 || r.status === 503)) return once();
+            // 读一次 body 里的 reason(409 要区分 op_in_flight / ppt_busy);读不到就空。
+            return r.clone().json().catch(function () { return {}; }).then(function (j) {
+              resolve({ resp: r, reason: (j && j.reason) || "" });
+            });
+          })
+          .catch(function () {
+            if (isLast) resolve({ unknown: true });
+            else once();
+          });
+      }
+      once();
+    });
+  }
+  // 统一入口:pending 守卫 + 按钮 "…" + 结果提示 + 立刻刷新页码。
+  function runOp(btn, path, body, finalTimeoutMs) {
+    if (state.actionPending || !canAct()) return;
+    state.actionPending = true;
+    if (btn) btn.classList.add("sending");
+    render();
+    sendOp(path, body, finalTimeoutMs)
+      .then(function (res) {
+        if (res.unknown) {
+          flashNotice("未送达或结果未知，核对页码后再按");
+        } else {
+          res.resp.reason = res.reason;
+          onActionResp(res.resp);
+        }
+      })
+      .finally(function () {
+        state.actionPending = false;
+        if (btn) btn.classList.remove("sending");
+        render();
+        poll(); // poll() 内含 pollSlide()
+      });
+  }
+
   // ── macro action buttons (delegated) ──
   el.actions.addEventListener("click", function (ev) {
     var b = ev.target.closest(".act");
-    if (!b || b.disabled || !canAct()) return;
-    var shape = b.getAttribute("data-id");
-    state.actionPending = true;
-    render();
-    api("api/action", { shape: shape }).then(onActionResp).catch(function () {
-      flashNotice("宏请求未完成，结果未知；请导播检查日志，勿重复点击");
-    }).finally(function () { state.actionPending = false; render(); poll(); });
+    if (!b || b.disabled) return;
+    runOp(b, "api/action", { shape: b.getAttribute("data-id") }, OP_FINAL_ACTION_MS);
   });
 
   // ── transport dock (delegated on body) ──
@@ -320,7 +404,7 @@
     var b = ev.target.closest(".d-btn, .d-next");
     if (!b || b.disabled) return;
     var a = b.getAttribute("data-action");
-    if (ACT[a]) api(ACT[a], {}).then(onActionResp).catch(function () {});
+    if (ACT[a]) runOp(b, ACT[a], {}, OP_FINAL_PAGE_MS);
   });
 
   // ── arm / lock ──
@@ -337,7 +421,7 @@
     var x = (ev.clientX - r.left) / r.width;
     var y = (ev.clientY - r.top) / r.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return;
-    api("api/click", { x: x, y: y }).then(onActionResp).catch(function () {});
+    runOp(null, "api/click", { x: x, y: y }, OP_FINAL_PAGE_MS);
   });
 
   // ── quick messages (MSG) ──
