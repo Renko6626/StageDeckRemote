@@ -5,7 +5,7 @@
 //!   * 主持人端浏览器 —— 通过 Axum HTTP/WS（routes.rs）访问，受限。
 //! 因此它被包成 `Arc<AppState>`，内部用 `Mutex` 保护可变字段。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -140,6 +140,9 @@ pub struct AppState {
     pub relay_status: Mutex<crate::relay_client::RelayStatus>,
     /// 当 relay_client 在跑时,这里有一个 sender;regenerate_token 时通过它推 TokenUpdate 给 relay。
     pub relay_notify: Mutex<Option<tokio::sync::mpsc::UnboundedSender<protocol::ControlMessage>>>,
+    /// A timed-out COM call still owns this permit until it actually returns.
+    pub ppt_gate: Arc<tokio::sync::Semaphore>,
+    pub ppt_probe_error: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -173,6 +176,8 @@ impl AppState {
             relay_config: Mutex::new(None),
             relay_status: Mutex::new(crate::relay_client::RelayStatus::Disabled),
             relay_notify: Mutex::new(None),
+            ppt_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            ppt_probe_error: Mutex::new(None),
         }
     }
 

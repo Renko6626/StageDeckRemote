@@ -13,6 +13,8 @@ mod config;
 mod frame_broker;
 mod input;
 mod log;
+#[cfg(any(windows, test))]
+mod macro_execution;
 mod network;
 mod ppt_com;
 mod presets;

@@ -45,6 +45,7 @@ export interface SlideAction {
 
 export interface SlideState {
   available: boolean;
+  busy?: boolean;
   in_show: boolean;
   current: number;
   total: number;

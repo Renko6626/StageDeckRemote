@@ -12,6 +12,7 @@ pub struct SlideAction {
 #[derive(Serialize, Clone, Debug)]
 pub struct SlideState {
     pub available: bool,
+    pub busy: bool,
     pub in_show: bool,
     pub current: i32,
     pub total: i32,
@@ -20,7 +21,40 @@ pub struct SlideState {
 
 impl SlideState {
     pub fn unavailable() -> Self {
-        SlideState { available: false, in_show: false, current: 0, total: 0, actions: Vec::new() }
+        SlideState { available: false, busy: false, in_show: false, current: 0, total: 0, actions: Vec::new() }
+    }
+
+    pub fn busy() -> Self {
+        Self { busy: true, ..Self::unavailable() }
+    }
+}
+
+/// Shared by HTTP and IPC: COM must never block the GUI or accumulate probe threads.
+pub async fn read_slide_state(state: std::sync::Arc<crate::app_state::AppState>) -> SlideState {
+    let permit = match state.ppt_gate.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => return SlideState::busy(),
+    };
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        slide_state()
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(2), task).await {
+        Ok(Ok(Ok(s))) => {
+            crate::log::ppt_probe(&state, if s.available { None } else { Some("PowerPoint 未连接".into()) });
+            s
+        }
+        result => {
+            let timed_out = result.is_err();
+            let error = match result {
+                Ok(Ok(Err(e))) => e,
+                Ok(Err(e)) => format!("读取任务异常：{e}"),
+                Err(_) => "读取超时，请检查 PowerPoint 弹窗".into(),
+                _ => unreachable!(),
+            };
+            crate::log::ppt_probe(&state, Some(error));
+            if timed_out { SlideState::busy() } else { SlideState::unavailable() }
+        }
     }
 }
 
@@ -95,19 +129,25 @@ mod com {
                 .map_err(|e| format!("找不到 PowerPoint：{e}"))?;
             let mut unk: Option<IUnknown> = None;
             GetActiveObject(&clsid, None, &mut unk)
-                .map_err(|_| "PowerPoint 未运行，请先打开 PowerPoint。".to_string())?;
+                .map_err(|e| format!("无法连接 PowerPoint，请确认程序已打开：{e}"))?;
             let unk = unk.ok_or_else(|| "GetActiveObject 返回空".to_string())?;
             unk.cast::<IDispatch>().map_err(|e| e.to_string())
         }
     }
 
     fn invoke(disp: &IDispatch, name: &str, flags: DISPATCH_FLAGS, args: &[VARIANT]) -> Result<VARIANT, String> {
+        invoke_detailed(disp, name, flags, args).map_err(|e| e.detail)
+    }
+
+    fn invoke_detailed(disp: &IDispatch, name: &str, flags: DISPATCH_FLAGS, args: &[VARIANT]) -> Result<VARIANT, crate::macro_execution::InvokeFailure> {
+        use crate::macro_execution::InvokeFailure;
+        use windows::Win32::System::Com::EXCEPINFO;
         unsafe {
             let wname: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
             let names = [PCWSTR(wname.as_ptr())];
             let mut dispid: i32 = 0;
             disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid)
-                .map_err(|e| format!("{name}: 找不到成员（{e}）"))?;
+                .map_err(|e| InvokeFailure { hresult: e.code().0 as u32, detail: format!("{name}: 找不到成员（{e}）") })?;
             let mut argv: Vec<VARIANT> = args.iter().rev().cloned().collect();
             let params = DISPPARAMS {
                 rgvarg: if argv.is_empty() { std::ptr::null_mut() } else { argv.as_mut_ptr() },
@@ -115,8 +155,28 @@ mod com {
                 ..Default::default()
             };
             let mut result = VARIANT::default();
-            disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, flags, &params, Some(&mut result), None, None)
-                .map_err(|e| format!("{name}: 调用失败（{e}）"))?;
+            let mut exception = EXCEPINFO::default();
+            let mut arg_error = u32::MAX;
+            let outcome = disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, flags, &params,
+                Some(&mut result), Some(&mut exception), Some(&mut arg_error));
+            if outcome.is_err() {
+                if let Some(fill) = exception.pfnDeferredFillIn {
+                    let _ = fill(&mut exception);
+                }
+            }
+            let detail = outcome.as_ref().err().map(|e| format!(
+                "{name}: HRESULT=0x{:08X}; VBA code={}; scode=0x{:08X}; source={}; description={}; arg={}; {e}",
+                e.code().0 as u32, exception.wCode, exception.scode as u32,
+                exception.bstrSource.to_string(), exception.bstrDescription.to_string(),
+                if arg_error == u32::MAX { "n/a".into() } else { arg_error.to_string() },
+            ));
+            // EXCEPINFO owns BSTRs, but windows-rs exposes them as ManuallyDrop.
+            std::mem::ManuallyDrop::drop(&mut exception.bstrSource);
+            std::mem::ManuallyDrop::drop(&mut exception.bstrDescription);
+            std::mem::ManuallyDrop::drop(&mut exception.bstrHelpFile);
+            if let Err(e) = outcome {
+                return Err(InvokeFailure { hresult: e.code().0 as u32, detail: detail.unwrap_or_default() });
+            }
             Ok(result)
         }
     }
@@ -196,17 +256,13 @@ mod com {
         VARIANT::from(disp.clone())
     }
 
-    /// Application.Run(macro, shape):先带形状(复刻对 `Sub Foo(shp As Shape)` 的点击),
-    /// 失败退回无参(CheckAnswer/BtnReset/Click_* 等无参宏)。带形状的失败发生在「参数个数
-    /// 校验」阶段、宏体不执行,故无双跑风险(详见 spec §2.2)。
-    pub fn run_macro_with_shape(app: &IDispatch, macro_name: &str, shape: &IDispatch) -> Result<(), String> {
-        let with_shape = match call_void(app, "Run", &[VARIANT::from(macro_name), dispatch_variant(shape)]) {
-            Ok(()) => return Ok(()),
-            Err(e) => e,
-        };
-        // 退回无参;若也失败,把带形状的原始错误一并带出（区分「无参宏」与「带形状宏宏体抛错」）。
-        call_void(app, "Run", &[VARIANT::from(macro_name)])
-            .map_err(|no_arg| format!("带形状失败（{with_shape}）;无参回退也失败（{no_arg}）"))
+    /// Retry without the shape only if dispatch rejected the argument count.
+    pub fn run_macro_with_shape(app: &IDispatch, macro_name: &str, shape: &IDispatch, report: impl FnMut(&str)) -> Result<(), String> {
+        crate::macro_execution::run_with_fallback(|with_shape| {
+            let mut args = vec![VARIANT::from(macro_name)];
+            if with_shape { args.push(dispatch_variant(shape)); }
+            invoke_detailed(app, "Run", DISPATCH_METHOD, &args).map(|_| ())
+        }, report)
     }
 
     /// 枚举一页的形状，取所有 ppActionRunMacro 绑定 → {label, macro}。
@@ -312,7 +368,7 @@ pub fn slide_state() -> Result<SlideState, String> {
     let current = com::get_i32(&slide, "SlideIndex").unwrap_or(0);
 
     let actions = com::slide_actions(&slide);
-    Ok(SlideState { available: true, in_show, current, total, actions })
+    Ok(SlideState { available: true, busy: false, in_show, current, total, actions })
 }
 
 #[cfg(not(windows))]
@@ -336,25 +392,27 @@ pub fn run_macro(_name: &str) -> Result<(), String> {
 /// 触发当前页某个形状的鼠标动作宏(安全:仅当前页、仅 ppActionRunMacro;宏名服务端现读)。
 /// 返回实际触发的宏名,供日志。
 #[cfg(windows)]
-pub fn trigger_action(shape_id: &str) -> Result<String, String> {
+pub fn trigger_action(shape_id: &str, mut report: impl FnMut(&str)) -> Result<String, String> {
     let _co = com::ComGuard::init();
     let app = com::connect()?;
     let (_in_show, slide) = com::current_slide(&app)?;
     let shapes = com::get_obj(&slide, "Shapes")?;
     // 按名定位(对增删导致的索引漂移免疫);定位不到 → 拒绝(不在当前页)。
     let shape = com::call_obj(&shapes, "Item", &[windows::core::VARIANT::from(shape_id)])
-        .map_err(|_| format!("形状不在当前页:{shape_id}"))?;
+        .map_err(|e| format!("无法定位当前页形状 {shape_id}：{e}"))?;
     // ActionSettings(1=ppMouseClick).Action 必须为 8=ppActionRunMacro。
     let acts = com::call_obj(&shape, "ActionSettings", &[windows::core::VARIANT::from(1i32)])
-        .map_err(|_| format!("形状无鼠标动作:{shape_id}"))?;
-    if com::get_i32(&acts, "Action").unwrap_or(0) != 8 {
+        .map_err(|e| format!("无法读取形状鼠标动作 {shape_id}：{e}"))?;
+    if com::get_i32(&acts, "Action")? != 8 {
         return Err(format!("形状不是运行宏动作:{shape_id}"));
     }
-    let macro_name = com::get_str(&acts, "Run").unwrap_or_default();
+    let macro_name = com::get_str(&acts, "Run")?;
     if macro_name.is_empty() {
         return Err(format!("形状未绑定宏:{shape_id}"));
     }
-    com::run_macro_with_shape(&app, &macro_name, &shape)?;
+    report(&format!("已解析形状 {shape_id} → 宏 {macro_name}；开始带形状调用"));
+    com::run_macro_with_shape(&app, &macro_name, &shape, &mut report)
+        .map_err(|e| format!("宏 {macro_name}: {e}"))?;
     Ok(macro_name)
 }
 
@@ -388,7 +446,7 @@ pub fn set_black(on: bool) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn trigger_action(_shape_id: &str) -> Result<String, String> { Err("仅 Windows".into()) }
+pub fn trigger_action(_shape_id: &str, _report: impl FnMut(&str)) -> Result<String, String> { Err("仅 Windows".into()) }
 #[cfg(not(windows))]
 pub fn nav_next() -> Result<(), String> { Err("仅 Windows".into()) }
 #[cfg(not(windows))]

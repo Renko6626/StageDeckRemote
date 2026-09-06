@@ -58,6 +58,7 @@
     statusTimer: null,
     pollRate: POLL,
     tokenBanner: false, // dir-banner currently shows the persistent "token changed" notice
+    actionPending: false,
   };
   var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
@@ -69,12 +70,15 @@
           body: JSON.stringify(Object.assign({ token: token, client_id: cid }, body)),
         }
       : { method: "GET" };
-    return fetch(path, opts);
+    var controller = new AbortController();
+    opts.signal = controller.signal;
+    var timeout = setTimeout(function () { controller.abort(); }, body ? 12000 : 5000);
+    return fetch(path, opts).finally(function () { clearTimeout(timeout); });
   }
 
   // ── gating ──（主持人侧一切操作都需 ARM 解锁)
   function canAct() {
-    return state.online && state.allowed && state.unlocked && state.isController;
+    return state.online && state.allowed && state.unlocked && state.isController && !state.actionPending && !state.com.busy;
   }
 
   // ── render: single DOM update point ──
@@ -97,7 +101,7 @@
       el.slideBig.textContent = cur ? String(cur).padStart(2, "0") : "--";
       el.slideTotal.textContent = tot || "--";
     }
-    el.showFlag.textContent = state.com.in_show ? "LIVE" : "IDLE";
+    el.showFlag.textContent = state.com.busy ? "BUSY" : state.com.in_show ? "LIVE" : "IDLE";
     el.showFlag.classList.toggle("live", state.com.in_show);
 
     el.viewonly.hidden = !(state.online && !state.isController);
@@ -121,6 +125,9 @@
 
     // COM 可用性(MAIN)
     var comUp = state.com.available;
+    el.comUnavail.textContent = state.com.busy
+      ? "PowerPoint 忙，请等待当前操作完成；若长时间无响应，请导播检查 PPT / VBA 弹窗"
+      : "PowerPoint 未连接 — 请导播检查 PowerPoint，或切到 SYNC 屏幕同步";
     el.comUnavail.hidden = comUp;
     el.actions.hidden = !comUp;
     el.actionsEmpty.hidden = !comUp || state.com.actions.length > 0;
@@ -155,19 +162,33 @@
   }
 
   // ── status + slide_state poll ──
-  function poll() {
-    var t0 = Date.now();
-    Promise.all([
-      api("api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401),
-      api("api/slide_state?token=" + encodeURIComponent(token)).then(handle401),
-    ])
-      .then(function (rs) {
-        if (!rs[0] || !rs[1]) return; // 401 handled
-        return Promise.all([rs[0].json(), rs[1].json()]);
+  var statusPending = false;
+  var slidePending = false;
+  function pollSlide() {
+    if (slidePending || state.tokenInvalid) return;
+    slidePending = true;
+    api("api/slide_state?token=" + encodeURIComponent(token)).then(handle401)
+      .then(function (r) { if (r && r.ok) return r.json(); })
+      .then(function (s) { if (s) { state.com = s; render(); } })
+      .catch(function () {
+        state.com = { available: false, in_show: false, current: 0, total: 0, actions: [] };
+        render();
       })
-      .then(function (data) {
-        if (!data) return;
-        var s = data[0];
+      .finally(function () { slidePending = false; });
+  }
+  function poll() {
+    pollSlide();
+    if (statusPending) return;
+    statusPending = true;
+    var t0 = Date.now();
+    api("api/status?token=" + encodeURIComponent(token) + "&cid=" + encodeURIComponent(cid)).then(handle401)
+      .then(function (r) {
+        if (!r) return;
+        if (!r.ok) throw new Error("status HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (s) {
+        if (!s) return;
         state.online = true;
         state.connecting = false;
         state.tokenInvalid = false;
@@ -180,7 +201,6 @@
         state.allowed = s.remote_enabled && !s.control_locked;
         state.unlocked = state.allowed && s.presenter_unlocked;
         state.isController = !!s.is_controller;
-        state.com = data[1] || state.com;
         render();
         // token 恢复后,若仍停留在 SYNC 且流已断,自愈重连
         if (state.mode === "sync" && !el.preview.getAttribute("src")) startStream();
@@ -189,7 +209,8 @@
       })
       .catch(function () {
         setDown(false);
-      });
+      })
+      .finally(function () { statusPending = false; });
   }
   function handle401(r) {
     if (r.status === 401) {
@@ -260,8 +281,14 @@
 
   // ── action response handler: surface 403 (locked / lost control), always refresh gating ──
   function onActionResp(r) {
-    if (r && r.status === 403) {
+    if (r && r.status === 401) {
+      handle401(r);
+    } else if (r && r.status === 403) {
       flashNotice("已被锁定 / 已失去控制权");
+    } else if (r && !r.ok) {
+      flashNotice(r.status === 504
+        ? "执行超时，结果未知；请导播检查 PPT 弹窗，勿重复点击"
+        : "操作失败，请导播查看日志和 PPT 弹窗（HTTP " + r.status + "）");
     }
     poll(); // refresh gating immediately in all cases
   }
@@ -274,9 +301,13 @@
   // ── macro action buttons (delegated) ──
   el.actions.addEventListener("click", function (ev) {
     var b = ev.target.closest(".act");
-    if (!b || b.disabled) return;
+    if (!b || b.disabled || !canAct()) return;
     var shape = b.getAttribute("data-id");
-    api("api/action", { shape: shape }).then(onActionResp).catch(function () {});
+    state.actionPending = true;
+    render();
+    api("api/action", { shape: shape }).then(onActionResp).catch(function () {
+      flashNotice("宏请求未完成，结果未知；请导播检查日志，勿重复点击");
+    }).finally(function () { state.actionPending = false; render(); poll(); });
   });
 
   // ── transport dock (delegated on body) ──

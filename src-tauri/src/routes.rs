@@ -301,7 +301,7 @@ async fn prev(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) ->
 }
 
 async fn page_turn(
-    state: &AppState,
+    state: &Arc<AppState>,
     token: &Option<String>,
     client_id: &Option<String>,
     forward: bool,
@@ -322,12 +322,15 @@ async fn page_turn(
         i.selected_window.as_ref().map(|w| w.handle)
     };
     // COM 翻页 + SendInput 回退都是阻塞型调用,整体放到 blocking 线程池。
-    let result = tokio::task::spawn_blocking(move || {
+    let worker_state = state.clone();
+    let result = log::run_operation(state.clone(), if forward { "主持人下一页" } else { "主持人上一页" }.into(), move || {
+        if !worker_state.click_allowed() { return Err("control_locked".into()); }
         // COM 翻页优先；失败回退 SendInput（先置前窗口）。
         let com_result = if forward { crate::ppt_com::nav_next() } else { crate::ppt_com::nav_prev() };
         match com_result {
             Ok(()) => Ok(()),
-            Err(_) => {
+            Err(error) => {
+                log::event(&worker_state, format!("COM 翻页失败：{error}；尝试键盘回退"));
                 if let Some(handle) = handle {
                     crate::window_manager::bring_to_front(handle);
                 }
@@ -338,16 +341,12 @@ async fn page_turn(
     })
     .await;
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             log::event(state, if forward { "下一页" } else { "上一页" });
             ok_json()
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             log::event(state, format!("翻页失败：{e}"));
-            json_err(StatusCode::INTERNAL_SERVER_ERROR, "input_failed")
-        }
-        Err(_) => {
-            log::event(state, "翻页失败：panicked");
             json_err(StatusCode::INTERNAL_SERVER_ERROR, "input_failed")
         }
     }
@@ -401,8 +400,8 @@ async fn black(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>) -
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match tokio::task::spawn_blocking(move || crate::ppt_com::set_black(true)).await {
-        Ok(Ok(())) => ok_json(),
+    match log::run_operation(state, "主持人黑屏".into(), move || crate::ppt_com::set_black(true)).await {
+        Ok(()) => ok_json(),
         _ => json_err(StatusCode::SERVICE_UNAVAILABLE, "black_failed"),
     }
 }
@@ -417,8 +416,8 @@ async fn restore(State(state): State<Arc<AppState>>, Json(req): Json<ActionReq>)
     if !state.click_allowed() {
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
-    match tokio::task::spawn_blocking(move || crate::ppt_com::set_black(false)).await {
-        Ok(Ok(())) => ok_json(),
+    match log::run_operation(state, "主持人恢复".into(), move || crate::ppt_com::set_black(false)).await {
+        Ok(()) => ok_json(),
         _ => json_err(StatusCode::SERVICE_UNAVAILABLE, "restore_failed"),
     }
 }
@@ -427,10 +426,7 @@ async fn slide_state(State(state): State<Arc<AppState>>, Query(q): Query<TokenQu
     if !token_ok(&state, &q.token) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
-    let st = match tokio::task::spawn_blocking(|| crate::ppt_com::slide_state()).await {
-        Ok(Ok(s)) => s,
-        _ => crate::ppt_com::SlideState::unavailable(),
-    };
+    let st = crate::ppt_com::read_slide_state(state).await;
     Json(st).into_response()
 }
 
@@ -446,24 +442,26 @@ async fn action(State(state): State<Arc<AppState>>, Json(req): Json<ActionReqBod
         return json_err(StatusCode::UNAUTHORIZED, "invalid_token");
     }
     if !is_controller(&state, &req.client_id) {
+        log::event(&state, format!("宏请求 {:?} 被拒绝：not_controller", req.shape));
         return json_err(StatusCode::FORBIDDEN, "not_controller");
     }
     if !state.click_allowed() {
+        log::event(&state, format!("宏请求 {:?} 被拒绝：control_locked", req.shape));
         return json_err(StatusCode::FORBIDDEN, "control_locked");
     }
     // 阻塞型 STA-COM 调用放到 blocking 线程池,避免占用 tokio worker。
     let shape = req.shape.clone();
-    let result = tokio::task::spawn_blocking(move || crate::ppt_com::trigger_action(&shape)).await;
+    let worker_state = state.clone();
+    let result = log::run_operation(state.clone(), format!("主持人宏 shape={shape:?}"), move || {
+        // Recheck after scheduling: the director may have locked control meanwhile.
+        if !worker_state.click_allowed() { return Err("control_locked".into()); }
+        crate::ppt_com::trigger_action(&shape, |phase| log::event(&worker_state, phase))
+    }).await;
     match result {
-        Ok(Ok(macro_name)) => {
-            log::event(&state, format!("触发 {} → {}", req.shape, macro_name));
-            ok_json()
-        }
-        Ok(Err(e)) => {
-            log::event(&state, format!("触发失败（{}）:{e}", req.shape));
-            json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed")
-        }
-        Err(_) => json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_panicked"),
+        Ok(_) => ok_json(),
+        Err(e) if e.contains("超时") => json_err(StatusCode::GATEWAY_TIMEOUT, "action_timeout"),
+        Err(e) if e.contains("PowerPoint 忙") => json_err(StatusCode::CONFLICT, "ppt_busy"),
+        Err(_) => json_err(StatusCode::INTERNAL_SERVER_ERROR, "action_failed"),
     }
 }
 
@@ -507,4 +505,37 @@ async fn message(State(state): State<Arc<AppState>>, Json(req): Json<MessageReq>
     let _ = state.message_tx.try_send(msg);
     crate::log::event(&state, format!("收到主持人消息：{text}"));
     ok_json()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn busy_powerpoint_keeps_heartbeat_alive_and_rejects_another_macro() {
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let state = Arc::new(AppState::new("test-secret".into(), 8787, tx));
+        {
+            let mut inner = state.lock();
+            inner.remote_enabled = true;
+            inner.presenter_unlocked = true;
+            inner.active_client_id = Some("phone".into());
+        }
+        let _permit = state.ppt_gate.clone().acquire_owned().await.unwrap();
+        assert!(crate::ppt_com::read_slide_state(state.clone()).await.busy);
+        let app = router(state.clone());
+        let status = app.clone().oneshot(axum::http::Request::builder()
+            .uri("/api/status?token=test-secret&cid=phone")
+            .body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let response = app.oneshot(axum::http::Request::builder()
+            .method("POST").uri("/api/action").header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"token":"test-secret","client_id":"phone","shape":"Answer"}"#)).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let logs = log::recent(&state, 100);
+        assert!(logs.iter().any(|entry| entry.message.contains("Answer") && entry.message.contains("忙")));
+        assert!(logs.iter().all(|entry| !entry.message.contains("test-secret")));
+    }
 }

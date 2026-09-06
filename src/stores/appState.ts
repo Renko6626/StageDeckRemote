@@ -42,20 +42,19 @@ export const useAppState = defineStore("app", () => {
   /** 拉取一次后端状态 + 日志，更新 store。 */
   async function refresh() {
     const net = useNetworkState();
-    try {
-      const [status, logEntries, rsStatus] = await Promise.all([
-        api.getStatus(),
-        api.getLogs(),
-        api.getRelayStatus(),
-      ]);
-      applyStatus(status);
-      logs.value = logEntries;
-      relayStatus.value = rsStatus;
-      net.online = true;
-    } catch (e) {
-      net.online = false;
-      console.error("refresh failed", e);
-    }
+    await Promise.allSettled([
+      api.getStatus().then(status => {
+        applyStatus(status);
+        net.online = true;
+      }).catch(e => {
+        net.online = false;
+        console.error("status refresh failed", e);
+      }),
+      api.getLogs().then(entries => { logs.value = entries; })
+        .catch(e => console.error("log refresh failed", e)),
+      api.getRelayStatus().then(status => { relayStatus.value = status; })
+        .catch(e => console.error("relay refresh failed", e)),
+    ]);
   }
 
   /** 从后端加载 relay 配置 + 状态（Settings 模态打开时调用）。 */

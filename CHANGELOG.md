@@ -3,6 +3,19 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.2.2] - 2026-09-06
+
+### Fixed
+
+- 宏执行仅在明确的参数数量错误时回退无参调用，避免运行时异常后重复执行。
+- 宏执行与 PPT 查询改为后台调用并限制并发；超时保持忙碌保护，手机心跳与导播日志独立刷新。
+- 区分 PowerPoint 忙碌和网络断开，显示宏失败、超时及检查 VBA 弹窗的提示。
+
+### Changed
+
+- 补充宏开始、形状/宏名、回退、耗时、超时、迟到结果和 COM/VBA 异常详情日志。
+- 新增宏回退、超时保护、心跳隔离、忙碌提示和日志刷新回归测试。
+
 ## [0.2.1] — 2026-06-27 · 导播 GUI 双模式
 
 - **重构**:导播 GUI 改 Setup/Live 双模式布局。顶栏加 `[Setup] [Live]` 切换;Setup 模式 rail 装 setup-class widget(选窗 / QR / 测试翻页 / 小型紧急锁);Live 模式 rail 装 live-class widget(大字计时 / 快捷消息 / 巨型紧急锁)。切换是纯前端 UI,不动主持人 ARM/lock/token,localStorage 也不持久化模式(冷启动总在 Setup)。

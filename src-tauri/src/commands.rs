@@ -158,20 +158,22 @@ pub fn get_logs(state: State<Arc<AppState>>) -> Vec<LogEntry> {
 
 /// 列出当前演示文稿的 VBA 宏名（导播专用，VBA spike）。
 #[tauri::command]
-pub fn vba_list_macros() -> Result<Vec<String>, String> {
-    crate::ppt_com::list_macros()
+pub async fn vba_list_macros(state: State<'_, Arc<AppState>>) -> Result<Vec<String>, String> {
+    log::run_operation(state.inner().clone(), "导播枚举宏".into(), crate::ppt_com::list_macros).await
 }
 
 /// 触发一个 VBA 宏（导播专用，VBA spike）。
 #[tauri::command]
-pub fn vba_run_macro(name: String) -> Result<(), String> {
-    crate::ppt_com::run_macro(&name)
+pub async fn vba_run_macro(state: State<'_, Arc<AppState>>, name: String) -> Result<(), String> {
+    log::run_operation(state.inner().clone(), format!("导播宏 {name:?}"), move || {
+        crate::ppt_com::run_macro(&name)
+    }).await
 }
 
 /// 导播 GUI：读当前页状态（COM）。
 #[tauri::command]
-pub fn get_slide_state() -> crate::ppt_com::SlideState {
-    crate::ppt_com::slide_state().unwrap_or_else(|_| crate::ppt_com::SlideState::unavailable())
+pub async fn get_slide_state(state: State<'_, Arc<AppState>>) -> Result<crate::ppt_com::SlideState, String> {
+    Ok(crate::ppt_com::read_slide_state(state.inner().clone()).await)
 }
 
 /// 导播 GUI:读取预制快捷消息列表。
