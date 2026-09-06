@@ -27,6 +27,17 @@ pub struct Session {
     pub stream_connected: AtomicBool,
 }
 
+impl Session {
+    /// 丢弃所有等待中的隧道请求:oneshot sender 一 drop,`tunnel()` 那头立刻收到 RecvError → 502。
+    /// 控制 WS 断开或被新连接接管时调用。返回丢弃条数(仅日志用)。
+    pub async fn fail_pending(&self) -> usize {
+        let mut pend = self.pending.lock().await;
+        let n = pend.len();
+        pend.clear();
+        n
+    }
+}
+
 pub struct SessionTable(pub RwLock<HashMap<SessionId, Arc<Session>>>);
 
 impl SessionTable {
@@ -58,7 +69,9 @@ impl SessionTable {
             *existing.control_tx.lock().await = control_tx;
             *existing.token.lock().await = token;
             *existing.last_seen.lock().await = Instant::now();
-            tracing::info!(sid = %sid, "session reattached");
+            // 旧连接上发出去的请求永远不会有回应了,立刻让手机拿到 502 而不是等满隧道超时。
+            let dropped = existing.fail_pending().await;
+            tracing::info!(sid = %sid, dropped_pending = dropped, "session reattached");
             return Ok(existing);
         }
         let (frame_tx, _) = watch::channel(Arc::new(Vec::new()));
@@ -144,6 +157,35 @@ mod tests {
             tbl.register_or_attach("PROM-2026".into(), "WRONG".into(), "t".into(), dummy_tx())
                 .await;
         assert_eq!(err.err(), Some("secret_mismatch"));
+    }
+
+    #[tokio::test]
+    async fn fail_pending_wakes_waiters_with_error() {
+        let tbl = SessionTable::new();
+        let sess = tbl
+            .register_or_attach("PROM-2026".into(), "sec".into(), "t".into(), dummy_tx())
+            .await
+            .unwrap();
+        let (tx, rx) = oneshot::channel();
+        sess.pending.lock().await.insert(7, tx);
+        assert_eq!(sess.fail_pending().await, 1);
+        assert!(rx.await.is_err(), "等待方必须立刻拿到 RecvError");
+        assert!(sess.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reattach_drops_stale_pending() {
+        let tbl = SessionTable::new();
+        let sess = tbl
+            .register_or_attach("PROM-2026".into(), "sec".into(), "t".into(), dummy_tx())
+            .await
+            .unwrap();
+        let (tx, rx) = oneshot::channel();
+        sess.pending.lock().await.insert(1, tx);
+        tbl.register_or_attach("PROM-2026".into(), "sec".into(), "t2".into(), dummy_tx())
+            .await
+            .unwrap();
+        assert!(rx.await.is_err());
     }
 
     #[tokio::test]

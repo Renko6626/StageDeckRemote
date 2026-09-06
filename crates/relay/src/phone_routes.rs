@@ -186,7 +186,12 @@ async fn tunnel(
                 .body(Body::from(bytes))
                 .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "bad_resp").into_response())
         }
-        Ok(_) => {
+        // sender 被 fail_pending() 丢掉 = 导播控制通道在等待期间断开/被接管
+        Ok(Err(_)) => {
+            tracing::warn!(sid = %sid, req_id, "tunnel: director_offline (pending dropped)");
+            (StatusCode::BAD_GATEWAY, "director_offline").into_response()
+        }
+        Ok(Ok(_)) => {
             tracing::warn!(sid = %sid, req_id, "tunnel: bad_tunnel_resp");
             (StatusCode::BAD_GATEWAY, "bad_tunnel_resp").into_response()
         }
