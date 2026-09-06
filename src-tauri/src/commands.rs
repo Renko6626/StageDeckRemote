@@ -28,6 +28,8 @@ pub struct DirectorStatus {
     pub access_url: Option<String>,
     pub timer: Option<crate::app_state::TimerView>,
     pub presenter_online: bool,
+    /// 控制端最近一次心跳距今毫秒;从未有控制端则 None。GUI 据此显示"弱 · Ns 前"。
+    pub presenter_seen_ms_ago: Option<u64>,
     /// Relay 访问 URL（HTTP 形式），仅 relay 已连接时为 Some(_)。
     pub relay_access_url: Option<String>,
 }
@@ -69,6 +71,7 @@ pub fn get_status(state: State<Arc<AppState>>) -> DirectorStatus {
             .as_ref()
             .map(|t| crate::app_state::timer_view_of(t, crate::app_state::now_ms())),
         presenter_online: crate::app_state::controller_online(&i, crate::app_state::now_ms()),
+        presenter_seen_ms_ago: crate::app_state::controller_seen_ms_ago(&i, crate::app_state::now_ms()),
         relay_access_url,
     }
 }
