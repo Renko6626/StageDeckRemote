@@ -56,3 +56,6 @@ windows = { version = "0.58", features = [
   "Win32_System_Ole",
 ] }
 windows-capture = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
