@@ -41,7 +41,9 @@ python3 scripts/prepare_quiz_template.py quiz_template.pptm --output /tmp/quiz-t
 
 ## 未决项
 
-1. **第4页 back 仍绑定不存在的 `ResetGame`。** 按钮文字与原宏名无法确定预期是撤销一条还是清空本页，等待确认。模块2现有 `Click_Back`（153行）和 `ResetAllShapes`（53行）语义不同；后者参数为 Slide，不能直接当作 Shape 参数入口。
+新样本 `10.13测试.pptm` 与产品通用性优化统一记录在 [兼容性待办](compatibility-backlog.md)，本轮暂缓实施。
+
+1. **第4页 back 的形状绑定不存在的 `ResetGame`，文字片段却绑定 `模块2.Click_Back`。** 两层绑定不一致，首轮报告把二者都写成 ResetGame 不准确。最终希望撤销一条还是清空本页仍待确认。模块2现有 `Click_Back`（153行）和 `ResetAllShapes`（53行）语义不同；后者参数为 Slide，不能直接当作 Shape 参数入口。
 2. **跨页重置及选择状态未调整。** 三个模块都有 `OnSlideShowPageChange`；模块2/3还各有 `ResetAllShapes`，未确认目标 PowerPoint 版本实际调用哪个翻页入口。所选 Shape 引用没有检查是否属于当前页（模块2:100、模块3:103）。
 3. **多重连线和撤销规则未调整。** 模块2/3的110行直接创建连接线，不查重；撤销无条件重置两端颜色。选择其他端点后再撤销，还可能出现高亮保留但选中引用已清空。需先明确玩法。
 4. **错误处理与模块合并未调整。** 样式和撤销过程存在整段 `On Error Resume Next`，连线创建失败没有清理。需围绕具体失败做局部修复，模块合并另行确认。
