@@ -3,7 +3,7 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
-## [Unreleased]
+## [0.2.6] - 2026-10-13
 
 ### Fixed
 
@@ -12,6 +12,10 @@
 - Relay 设置保存与运行配置分离，重启前二维码继续指向当前连接；地址校验和磁盘写入失败会反馈到设置界面。
 - admin 状态页补充中文连接文字、手机布局及使用说明。
 - 提供题目模板局部修复脚本：限定第 5 页 back 的宏模块，导出配套音效；原始 PPTM 保持不变，第 4 页 back 行为仍待确认。
+
+### Known limitations
+
+- 通用 PPT 动作识别、透明点击层显示、宏签名与上下文校验暂缓，见 [后续待办](docs/vba/compatibility-backlog.md)。本版未包含这些优化，仍需 Windows PowerPoint 真机验收。
 
 ## [0.2.5] - 2026-09-07 · 糟糕网络下的控制可靠性
 
