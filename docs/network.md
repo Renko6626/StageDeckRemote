@@ -149,6 +149,8 @@
    session_grace_secs = 60
    # 单次隧道请求超时
    tunnel_timeout_secs = 30
+   # 可选：启用只读状态页，使用独立于主持人访问码的管理密钥
+   # admin_token = "替换为独立的管理密钥"
    ```
 
 3. **systemd 单元**：`/etc/systemd/system/stagedeck-relay.service`：
@@ -179,6 +181,10 @@
 5. **校园网内可达性**：从另一台校园网内的机器 `curl http://<relay-host>:8080/...`
    应能连通。**不需要公网 IP**——v1 不上 TLS，纯校园内 HTTP/WS。
 
+设置 `admin_token` 后，访问 `http://<relay-host>:8080/admin/status?token=<admin_token>`
+查看会话、控制/推流连接、接收帧数及等待请求。此页只读，每 5 秒刷新；`/admin` 没有页面。
+未配置管理密钥时返回 404，密钥错误返回 401。静止 PPT 不产生新帧，判断断线请看连接状态。
+
 ### 7.3 导播端开演前：填 Relay 配置
 
 1. 打开 **StageDeck Remote → Settings**。
@@ -189,6 +195,8 @@
      这就是手机扫码 URL 里的 `<sid>`。
    - **secret**：预共享密钥（你自己定的一串字符）；**关键**——防别人占用同一个 session_id。
 3. **保存**。这个改动需要**重启导播应用**才能生效（启动时才会去连 relay）。
+   保存后，设置显示待生效配置；当前连接和二维码仍使用启动时配置。关闭 Relay 也在重启后生效。
+   地址使用 `ws://主机:端口`，可带末尾 `/`，不包含子路径或查询参数；当前客户端未启用 `wss://`。
 
 ### 7.4 开演流程（Relay 模式）
 

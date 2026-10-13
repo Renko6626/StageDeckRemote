@@ -25,6 +25,8 @@ pub struct Session {
     pub frame_last_at: Mutex<Option<Instant>>,
     /// stream WS 当前是否连着(stream_loop 进出时 set true/false)。
     pub stream_connected: AtomicBool,
+    /// 当前推流连接身份；持锁检查并更新帧/状态，避免旧连接污染接管后的会话。
+    pub stream_owner: Mutex<Option<Arc<()>>>,
 }
 
 impl Session {
@@ -66,12 +68,14 @@ impl SessionTable {
                 return Err("secret_mismatch");
             }
             // Same secret reconnect: replace control_tx + update token + refresh last_seen.
-            *existing.control_tx.lock().await = control_tx;
+            let mut current_control = existing.control_tx.lock().await;
+            *current_control = control_tx;
             *existing.token.lock().await = token;
             *existing.last_seen.lock().await = Instant::now();
             // 旧连接上发出去的请求永远不会有回应了,立刻让手机拿到 502 而不是等满隧道超时。
             let dropped = existing.fail_pending().await;
             tracing::info!(sid = %sid, dropped_pending = dropped, "session reattached");
+            drop(current_control);
             return Ok(existing);
         }
         let (frame_tx, _) = watch::channel(Arc::new(Vec::new()));
@@ -88,20 +92,29 @@ impl SessionTable {
             frames_pushed: AtomicU64::new(0),
             frame_last_at: Mutex::new(None),
             stream_connected: AtomicBool::new(false),
+            stream_owner: Mutex::new(None),
         });
         tracing::info!(sid = %sid, "session registered");
         tbl.insert(sid, sess.clone());
         Ok(sess)
     }
 
-    pub async fn drop_session(&self, sid: &str) {
-        if self.0.write().await.remove(sid).is_some() {
-            tracing::info!(sid = %sid, "session dropped");
+    pub async fn drop_if_expired(&self, sid: &str, grace: std::time::Duration, now: Instant) -> bool {
+        let mut tbl = self.0.write().await;
+        let Some(sess) = tbl.get(sid) else { return false; };
+        // 扫描和删除之间可能已重连；与 register_or_attach 同持表写锁重新确认。
+        if !sess.control_tx.lock().await.is_closed()
+            || now.saturating_duration_since(*sess.last_seen.lock().await) <= grace
+        {
+            return false;
         }
+        tbl.remove(sid);
+        tracing::info!(sid = %sid, "session dropped");
+        true
     }
 
     /// 把"控制 WS 已挂掉 + last_seen 超过 grace"的 sid 摘出来给 reaper。
-    /// 不真删,调用方拿这个列表挨个 drop_session(),避免与活跃 WS 拿同把锁打架。
+    /// 不真删；调用方用 drop_if_expired() 在删除时重新检查，避免误删刚重连的会话。
     pub async fn collect_expired(
         &self,
         grace: std::time::Duration,
@@ -219,5 +232,13 @@ mod tests {
         let expired =
             tbl.collect_expired(std::time::Duration::from_secs(60), Instant::now()).await;
         assert_eq!(expired, vec!["STALE".to_string()]);
+
+        // 扫描完成后重连：先前摘出的 sid 不再应被删除。
+        let (tx, _rx) = mpsc::unbounded_channel();
+        tbl.register_or_attach("STALE".into(), "s".into(), "new-token".into(), tx).await.unwrap();
+        assert!(!tbl.drop_if_expired("STALE", std::time::Duration::from_secs(60), Instant::now()).await);
+        assert!(tbl.get("STALE").await.is_some());
+        assert!(tbl.drop_if_expired("FRESH-DEAD", std::time::Duration::from_secs(60), Instant::now() + std::time::Duration::from_secs(61)).await);
+        assert!(tbl.get("FRESH-DEAD").await.is_none());
     }
 }

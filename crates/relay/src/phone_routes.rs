@@ -65,6 +65,9 @@ pub fn router() -> Router<Arc<AppCtx>> {
 }
 
 async fn presenter_html(Path(sid): Path<String>) -> Response {
+    if !crate::director_ws::valid_sid(&sid) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
     let base = format!("/r/{}/presenter/", sid);
     let html = PRESENTER_HTML.replace("__BASE__", &base);
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
@@ -158,11 +161,14 @@ async fn tunnel(
             .collect(),
         body_b64,
     };
+    // 接管与请求入队在同一控制连接锁下串行，避免新请求被旧连接清理。
+    let control = sess.control_tx.lock().await;
     // 5. 注册 oneshot
     let (tx, rx) = oneshot::channel();
     sess.pending.lock().await.insert(req_id, tx);
     // 6. 发到 director
-    let send_res = sess.control_tx.lock().await.send(req);
+    let send_res = control.send(req);
+    drop(control);
     if send_res.is_err() {
         sess.pending.lock().await.remove(&req_id);
         tracing::warn!(sid = %sid, req_id, "tunnel: director_offline (control channel closed)");
@@ -259,6 +265,7 @@ mod tests {
             frames_pushed: std::sync::atomic::AtomicU64::new(0),
             frame_last_at: tokio::sync::Mutex::new(None),
             stream_connected: std::sync::atomic::AtomicBool::new(false),
+            stream_owner: tokio::sync::Mutex::new(None),
         });
         (sess, rx)
     }

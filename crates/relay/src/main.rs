@@ -35,7 +35,7 @@ async fn main() {
 }
 
 /// 周期性扫表:控制 WS 已掉线 + last_seen 超过 grace 的 session 摘掉。
-/// 不掉 = 现在,改的就是 spec §13 的宽限期机制(代码里有 last_seen / drop_session,缺一个 tick)。
+/// 删除前再次核对是否过期，避免把扫描后刚重连的会话移除。
 fn spawn_session_reaper(ctx: Arc<AppCtx>) {
     let grace = Duration::from_secs(ctx.config.session_grace_secs);
     tokio::spawn(async move {
@@ -47,8 +47,7 @@ fn spawn_session_reaper(ctx: Arc<AppCtx>) {
             tick.tick().await;
             let expired = ctx.sessions.collect_expired(grace, Instant::now()).await;
             for sid in expired {
-                tracing::info!(sid = %sid, "reaping expired session (control gone past grace)");
-                ctx.sessions.drop_session(&sid).await;
+                ctx.sessions.drop_if_expired(&sid, grace, Instant::now()).await;
             }
         }
     });

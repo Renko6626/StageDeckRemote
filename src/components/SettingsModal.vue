@@ -60,15 +60,21 @@ async function savePort() {
 
 // 打开模态时加载 relay 配置
 onMounted(async () => {
-  await app.loadRelay();
-  if (app.relayConfig) {
-    relayBase.value = app.relayConfig.base_url;
-    relaySid.value = app.relayConfig.session_id;
-    relaySecret.value = app.relayConfig.secret;
+  try {
+    await app.loadRelay();
+    if (app.relayConfig) {
+      relayBase.value = app.relayConfig.base_url;
+      relaySid.value = app.relayConfig.session_id;
+      relaySecret.value = app.relayConfig.secret;
+    }
+  } catch (error) {
+    flash(`无法读取 Relay 配置：${String(error)}`);
   }
 });
 
 async function saveRelay() {
+  relayBase.value = relayBase.value.trim();
+  relaySid.value = relaySid.value.trim();
   if (!/^[A-Z0-9-]{4,16}$/.test(relaySid.value)) {
     flash("Session ID 必须匹配 [A-Z0-9-]{4,16}");
     return;
@@ -80,8 +86,8 @@ async function saveRelay() {
       secret: relaySecret.value,
     });
     flash("Relay 配置已保存 — 重启导播生效");
-  } catch {
-    flash("Relay 保存失败 — 请重试");
+  } catch (error) {
+    flash(String(error));
   }
 }
 
@@ -91,7 +97,7 @@ async function clearRelay() {
     relayBase.value = "";
     relaySid.value = "";
     relaySecret.value = "";
-    flash("Relay 已关闭 — 重启导播生效");
+    flash("已保存关闭设置，重启导播后停止 Relay 连接");
   } catch {
     flash("操作失败 — 请重试");
   }
@@ -135,10 +141,9 @@ async function clearRelay() {
         <p class="desc">
           <span class="relay-status" :class="'rs-' + app.relayStatus.split(':')[0]">●</span>
           {{ app.relayStatus }}
-          <template v-if="app.relayStatus !== 'connecting' && app.relayStatus !== 'connected'">
-            · 改完重启导播生效
-          </template>
+
         </p>
+        <p class="desc">下面是已保存配置。修改后重启生效，当前连接和二维码继续使用启动时配置。</p>
         <div class="prow">
           <input v-model="relayBase" placeholder="ws://stagedeck.example.com:8080" />
         </div>
@@ -173,6 +178,8 @@ async function clearRelay() {
 .modal {
   width: 100%;
   max-width: 420px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--line-hi);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
@@ -235,6 +242,7 @@ async function clearRelay() {
 }
 .prow input {
   flex: 1 1 auto;
+  min-width: 0;
   background: var(--panel-2);
   border: 1px solid var(--line-hi);
   color: var(--ink);

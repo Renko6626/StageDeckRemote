@@ -362,14 +362,17 @@ pub fn set_server_port(app: tauri::AppHandle, state: State<Arc<AppState>>, port:
     }
 }
 
-/// 导播 GUI:读取当前 relay 配置（无配置则返回 null）。
+/// 导播 GUI:读取磁盘上的待生效配置。AppState 始终保存启动时的运行配置。
 #[tauri::command]
-pub fn get_relay_config(state: State<Arc<AppState>>) -> Option<RelayConfigDto> {
-    state.relay_config.lock().unwrap().as_ref().map(|c| RelayConfigDto {
-        base_url: c.base_url.clone(),
-        session_id: c.session_id.clone(),
-        secret: c.secret.clone(),
-    })
+pub fn get_relay_config(app: tauri::AppHandle) -> Result<Option<RelayConfigDto>, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config = crate::config::Config::load_for_edit(&dir.join("config.json"))
+        .map_err(|e| format!("无法读取原配置：{e}"))?;
+    Ok(config.relay.filter(|r| r.enabled).map(|c| RelayConfigDto {
+        base_url: c.base_url,
+        session_id: c.session_id,
+        secret: c.secret,
+    }))
 }
 
 /// 导播 GUI:保存 relay 配置（null = 清除 relay）。改完需重启导播生效。
@@ -378,27 +381,19 @@ pub fn set_relay_config(
     app: tauri::AppHandle,
     state: State<Arc<AppState>>,
     cfg: Option<RelayConfigDto>,
-) {
-    // 写入 AppState（内存）。
-    *state.relay_config.lock().unwrap() = cfg.as_ref().map(|c| crate::relay_client::RelayConfig {
-        base_url: c.base_url.clone(),
-        session_id: c.session_id.clone(),
-        secret: c.secret.clone(),
-    });
-    // 持久化到 config.json。
-    if let Ok(dir) = app.path().app_config_dir() {
-        let path = dir.join("config.json");
-        let mut conf = crate::config::Config::load(&path);
-        conf.relay = cfg.map(|c| crate::config::RelayConfigPersist {
+) -> Result<(), String> {
+    let relay = cfg.map(|c| crate::config::RelayConfigPersist {
             base_url: c.base_url,
             session_id: c.session_id,
             secret: c.secret,
             enabled: true,
         });
-        let _ = conf.save(&path);
-    }
-    // 注意：本 PR 不做 relay 客户端热重启；UI 文案已标注"重启生效"。
+    let dir = app.path().app_config_dir().map_err(|e| format!("无法读取配置目录：{e}"))?;
+    let path = dir.join("config.json");
+    crate::config::Config::save_relay(&path, relay)?;
+    // 客户端仍使用启动时配置；二维码也必须保持指向这条正在运行的连接。
     log::event(&state, "Relay 配置已更新（重启生效）");
+    Ok(())
 }
 
 /// 导播 GUI:返回当前 relay 连接状态字符串。

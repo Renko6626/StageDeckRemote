@@ -292,6 +292,8 @@ async fn stream_loop(state: Arc<AppState>, cfg: RelayConfig) {
             // 订阅 broker 推帧;同时必须 poll 读半边:Relay 每 10s 发协议层 Ping,
             // tungstenite 只有在读侧被 poll 时才会把自动 Pong 写出去,也只有这样才收得到 Close。
             let mut rx = state.capture.subscribe();
+            // 新订阅默认认为现值已读；重连时静止幻灯片也必须立即补发。
+            rx.mark_changed();
             loop {
                 tokio::select! {
                     changed = rx.changed() => {

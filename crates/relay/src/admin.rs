@@ -83,9 +83,10 @@ async fn status_page(
         });
     }
 
+    rows.sort_by(|a, b| a.sid.cmp(&b.sid));
     let html = render_html(uptime_secs, &rows);
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store"), (header::REFERRER_POLICY, "no-referrer")],
         html,
     )
         .into_response()
@@ -108,26 +109,26 @@ fn render_html(uptime_secs: u64, rows: &[Row]) -> String {
     out.push_str(HEAD);
     out.push_str("<body><main>\n");
     out.push_str(&format!(
-        "<h1>STAGEDECK<span class=\"sub\">&nbsp;&middot;&nbsp;RELAY STATUS</span></h1>\n\
-         <p class=\"meta\">uptime <b>{}</b> &middot; sessions <b>{}</b> &middot; auto-refresh 5s</p>\n",
+        "<h1>STAGEDECK<span class=\"sub\"> Relay 状态</span></h1>\n\
+         <p class=\"meta\">已运行 <b>{}</b>　会话 <b>{}</b>　每 5 秒刷新</p>\n",
         html_escape(&fmt_dur(uptime_secs)),
         rows.len(),
     ));
 
     if rows.is_empty() {
-        out.push_str("<p class=\"empty\">no active sessions</p>\n");
+        out.push_str("<p class=\"empty\">暂无会话，请在导播端配置并连接 Relay</p>\n");
     } else {
         out.push_str(
             "<table>\n<thead><tr>\
-             <th>SESSION</th>\
-             <th>CTRL</th>\
-             <th>STREAM</th>\
-             <th>FRAMES</th>\
-             <th>PEND</th>\
-             <th>LAST&nbsp;SEEN</th>\
-             <th>LAST&nbsp;FRAME</th>\
-             <th>UP</th>\
-             <th>SECRET</th>\
+             <th>会话</th>\
+             <th>控制</th>\
+             <th>推流</th>\
+             <th>接收帧数</th>\
+             <th>等待请求</th>\
+             <th>最近心跳</th>\
+             <th>最近画面</th>\
+             <th>注册时长</th>\
+             <th>密钥提示</th>\
              </tr></thead>\n<tbody>\n",
         );
         for r in rows {
@@ -137,15 +138,15 @@ fn render_html(uptime_secs: u64, rows: &[Row]) -> String {
             };
             out.push_str(&format!(
                 "<tr>\
-                 <td class=\"sid\">{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td>{}</td>\
-                 <td class=\"sec\">{}</td>\
+                 <td class=\"sid\" data-label=\"会话\">{}</td>\
+                 <td data-label=\"控制\">{}</td>\
+                 <td data-label=\"推流\">{}</td>\
+                 <td data-label=\"接收帧数\">{}</td>\
+                 <td data-label=\"等待请求\">{}</td>\
+                 <td data-label=\"最近心跳\">{}</td>\
+                 <td data-label=\"最近画面\">{}</td>\
+                 <td data-label=\"注册时长\">{}</td>\
+                 <td class=\"sec\" data-label=\"密钥提示\">{}</td>\
                  </tr>\n",
                 html_escape(&r.sid),
                 indicator(r.control_connected),
@@ -161,15 +162,16 @@ fn render_html(uptime_secs: u64, rows: &[Row]) -> String {
         out.push_str("</tbody></table>\n");
     }
 
-    out.push_str("</main></body></html>");
+    out.push_str("<p class=\"help\">控制和推流分别显示连接状态。PPT 画面静止时不发送新帧，最近画面时间较久不代表断线。已断开的会话会在宽限期后移除。</p></main></body></html>");
     out
 }
 
 const HEAD: &str = r#"<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>StageDeck Relay · Status</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StageDeck Relay 状态</title>
 <meta http-equiv="refresh" content="5">
 <style>
 :root {
@@ -191,6 +193,19 @@ thead th { font-size: 10px; letter-spacing: 0.18em; color: var(--ink-faint); tex
 tbody td { padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 12px; }
 td.sid { color: var(--ink); font-weight: 700; letter-spacing: 0.06em; }
 td.sec { color: var(--ink-faint); }
+.state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.help { color: var(--ink-dim); font-size: 12px; line-height: 1.7; margin-top: 22px; }
+@media (max-width: 760px) {
+  main { padding: 22px 16px; }
+  h1 { letter-spacing: .08em; }
+  .meta { letter-spacing: 0; line-height: 1.8; }
+  table, tbody { display: block; }
+  thead { display: none; }
+  tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; margin-bottom: 16px; padding: 12px; border: 1px solid var(--line-hi); background: var(--panel); }
+  tbody td { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; padding: 10px 0; }
+  tbody td::before { content: attr(data-label); color: var(--ink-faint); font-size: 11px; font-weight: 400; }
+  td.sid { grid-column: 1 / -1; font-size: 15px; }
+}
 .dot { display: inline-block; width: 9px; height: 9px; vertical-align: middle; }
 .dot.on  { background: var(--ok); }
 .dot.off { background: var(--danger); }
@@ -200,9 +215,9 @@ td.sec { color: var(--ink-faint); }
 
 fn indicator(on: bool) -> &'static str {
     if on {
-        r#"<span class="dot on" title="connected"></span>"#
+        r#"<span class="state"><span class="dot on" aria-hidden="true"></span>已连接</span>"#
     } else {
-        r#"<span class="dot off" title="disconnected"></span>"#
+        r#"<span class="state"><span class="dot off" aria-hidden="true"></span>未连接</span>"#
     }
 }
 
@@ -264,8 +279,8 @@ mod tests {
     #[test]
     fn render_empty_table_shows_placeholder() {
         let html = render_html(42, &[]);
-        assert!(html.contains("no active sessions"));
-        assert!(html.contains("uptime <b>42s</b>"));
+        assert!(html.contains("暂无会话，请在导播端配置并连接 Relay"));
+        assert!(html.contains("已运行 <b>42s</b>"));
     }
 
     #[test]

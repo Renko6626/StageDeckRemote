@@ -108,7 +108,9 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
                 let Ok(m): Result<ControlMessage, _> = serde_json::from_str(&t) else {
                     continue;
                 };
-                handle_director_msg(&sess, m).await;
+                if !handle_director_msg(&sess, &tx, m).await {
+                    break "replaced";
+                }
             }
             Ok(Some(Ok(Message::Close(_)))) => break "close_frame",
             Ok(Some(Ok(_))) => {}
@@ -119,19 +121,29 @@ async fn control_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     // 6. Director disconnected: stop writer/pinger, fail requests still waiting on THIS
     //    connection, update last_seen and let the grace-period reaper handle teardown.
     writer.abort();
+    let _ = writer.await; // 等 rx 真正释放，离线请求不再排入无人消费的队列。
     pinger.abort();
     // 只有当 session 的 control_tx 仍指向本连接(已随 writer 退出而关闭)时才清 pending;
     // 若新连接已接管,pending 里是新连接的请求,不能动。
-    let dropped = if sess.control_tx.lock().await.is_closed() {
+    let current_control = sess.control_tx.lock().await;
+    let dropped = if current_control.same_channel(&tx) {
+        *sess.last_seen.lock().await = Instant::now();
         sess.fail_pending().await
     } else {
         0
     };
-    *sess.last_seen.lock().await = Instant::now();
+    drop(current_control);
     tracing::info!(sid = %sid, reason = disconnect_reason, dropped_pending = dropped, "control ws disconnected");
 }
 
-async fn handle_director_msg(sess: &crate::session::Session, m: ControlMessage) {
+async fn handle_director_msg(
+    sess: &crate::session::Session,
+    connection: &mpsc::UnboundedSender<ControlMessage>,
+    m: ControlMessage,
+) -> bool {
+    // 与注册接管、请求入队使用同一锁，身份检查和状态更新不可被接管穿插。
+    let current_control = sess.control_tx.lock().await;
+    if !current_control.same_channel(connection) { return false; }
     // Inspect by reference first so we can forward the owned `m` whole.
     if let ControlMessage::TunnelResp { req_id, .. } = &m {
         let req_id = *req_id;
@@ -139,7 +151,7 @@ async fn handle_director_msg(sess: &crate::session::Session, m: ControlMessage) 
         if let Some(tx) = pend.remove(&req_id) {
             let _ = tx.send(m);
         }
-        return;
+        return true;
     }
     match m {
         ControlMessage::TokenUpdate { token } => {
@@ -150,6 +162,7 @@ async fn handle_director_msg(sess: &crate::session::Session, m: ControlMessage) 
         }
         _ => {}
     }
+    true
 }
 
 async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
@@ -174,9 +187,13 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
             return;
         }
     };
+    let owner = Arc::new(());
+    {
+        let mut current = sess.stream_owner.lock().await;
+        *current = Some(owner.clone());
+        sess.stream_connected.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     let _ = send_json(&mut socket, &ControlMessage::ServerHello { ok: true, reason: None }).await;
-    // Mark stream connected for admin status; clear when this loop exits.
-    sess.stream_connected.store(true, std::sync::atomic::Ordering::SeqCst);
     tracing::info!(sid = %sid, "stream ws connected");
     // Protocol-level Ping every HEARTBEAT_INTERVAL; tungstenite on the director auto-Pongs,
     // and that Pong (or any frame) resets the liveness clock below.
@@ -191,10 +208,15 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
     });
     // Receive binary frames and broadcast via watch channel.
     let disconnect_reason = loop {
-        match tokio::time::timeout(LIVENESS_TIMEOUT, stream.next()).await {
+        let inbound = tokio::time::timeout(LIVENESS_TIMEOUT, stream.next()).await;
+        let current = sess.stream_owner.lock().await;
+        if !current.as_ref().is_some_and(|id| Arc::ptr_eq(id, &owner)) {
+            break "replaced";
+        }
+        match inbound {
             Err(_) => break "liveness_timeout",
             Ok(Some(Ok(Message::Binary(b)))) => {
-                let _ = sess.frame_tx.send(Arc::new(b));
+                sess.frame_tx.send_replace(Arc::new(b));
                 sess.frames_pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 *sess.frame_last_at.lock().await = Some(std::time::Instant::now());
             }
@@ -205,7 +227,13 @@ async fn stream_loop(mut socket: WebSocket, ctx: Arc<AppCtx>) {
         }
     };
     pinger.abort();
-    sess.stream_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+    {
+        let mut current = sess.stream_owner.lock().await;
+        if current.as_ref().is_some_and(|id| Arc::ptr_eq(id, &owner)) {
+            *current = None;
+            sess.stream_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
     tracing::info!(
         sid = %sid,
         reason = disconnect_reason,
@@ -219,7 +247,7 @@ async fn send_json(socket: &mut WebSocket, msg: &ControlMessage) -> Result<(), a
     socket.send(Message::Text(s)).await
 }
 
-fn valid_sid(s: &str) -> bool {
+pub(crate) fn valid_sid(s: &str) -> bool {
     let len = s.len();
     (4..=16).contains(&len)
         && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-')

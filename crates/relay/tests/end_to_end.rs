@@ -99,20 +99,90 @@ async fn end_to_end_tunnel_and_stream() {
     let _ = tokio::time::timeout(Duration::from_secs(2), dir_handle).await;
 }
 
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect_stream(ws_base: &str, sid: &str) -> Ws {
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("{ws_base}/director/stream")).await.unwrap();
+    ws.send(Message::Text(serde_json::to_string(&ControlMessage::ClientHello {
+        session_id: sid.into(), token: "TOK".into(), secret: "SEC".into(), version: PROTOCOL_VERSION,
+    }).unwrap())).await.unwrap();
+    let hello = ws.next().await.unwrap().unwrap();
+    assert!(matches!(hello, Message::Text(t) if matches!(serde_json::from_str::<ControlMessage>(&t), Ok(ControlMessage::ServerHello { ok: true, .. }))));
+    ws
+}
+
+async fn wait_frames(ctx: &relay::AppCtx, sid: &str, count: u64) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let sess = ctx.sessions.get(sid).await.unwrap();
+        while sess.frames_pushed.load(std::sync::atomic::Ordering::Relaxed) < count {
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("relay did not receive the frame");
+}
+
 #[tokio::test]
-#[ignore = "stream frames test enabled in Windows runtime verification"]
 async fn end_to_end_stream_frames_through() {
-    // enabled when relay stream broker side is exercised (Task 7 e2e on Windows)
-    //
-    // Outline:
-    //   1. Start relay, mock director connects both /director/control and /director/stream.
-    //   2. Director pushes a Binary frame over the stream WS.
-    //   3. Phone connects to /r/<sid>/api/stream.mjpg?token=..., reads the first
-    //      chunked response chunk, asserts it contains "--frame" and "Content-Length".
-    //
-    // The relay stream broker (watch channel + WatchStream) is exercised in the unit
-    // tests in phone_routes.rs (stream_emits_multipart_after_frame_pushed). Full
-    // end-to-end including the director stream_loop (Task 7) requires a Windows host.
+    let (base, ws_base, ctx) = start_relay(2).await;
+    let (_control, _reader) = connect_director(&ws_base, "LATE-VIEWER", "TOK").await;
+    let mut stream = connect_stream(&ws_base, "LATE-VIEWER").await;
+    stream.send(Message::Binary(b"first-frame".to_vec())).await.unwrap();
+    wait_frames(&ctx, "LATE-VIEWER", 1).await;
+    let mut response = reqwest::get(format!("{base}/r/LATE-VIEWER/api/stream.mjpg?token=TOK")).await.unwrap();
+    let chunk = tokio::time::timeout(Duration::from_secs(1), response.chunk()).await
+        .expect("late viewer did not receive the static frame").unwrap().unwrap();
+    assert!(chunk.windows(b"first-frame".len()).any(|w| w == b"first-frame"));
+}
+
+#[tokio::test]
+async fn stream_takeover_keeps_new_connection_online() {
+    let (base, ws_base, ctx) = start_relay(2).await;
+    let (_control, _reader) = connect_director(&ws_base, "STREAM-SWAP", "TOK").await;
+    let mut old = connect_stream(&ws_base, "STREAM-SWAP").await;
+    let mut new = connect_stream(&ws_base, "STREAM-SWAP").await;
+    old.send(Message::Binary(b"stale-frame".to_vec())).await.unwrap();
+    old.close(None).await.unwrap();
+    // Observe the old connection closing before checking the new connection's status.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(Ok(msg)) = old.next().await {
+            if matches!(msg, Message::Close(_)) { break; }
+        }
+    }).await.unwrap();
+    let sess = ctx.sessions.get("STREAM-SWAP").await.unwrap();
+    assert_eq!(sess.frames_pushed.load(std::sync::atomic::Ordering::Relaxed), 0, "old stream must not publish after takeover");
+    new.send(Message::Binary(b"current-frame".to_vec())).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while sess.frame_last_at.lock().await.is_none() { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    // A fresh viewer must see only the new stream, including after old cleanup.
+    let mut response = reqwest::get(format!("{base}/r/STREAM-SWAP/api/stream.mjpg?token=TOK")).await.unwrap();
+    let chunk = tokio::time::timeout(Duration::from_secs(1), response.chunk()).await.unwrap().unwrap().unwrap();
+    assert!(chunk.windows(b"current-frame".len()).any(|w| w == b"current-frame"));
+    assert!(sess.stream_connected.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn old_control_cannot_replace_new_token() {
+    let (_base, ws_base, ctx) = start_relay(2).await;
+    let (mut old, mut old_reader) = connect_director(&ws_base, "CTRL-SWAP", "OLD").await;
+    let (_new, _new_reader) = connect_director(&ws_base, "CTRL-SWAP", "NEW").await;
+    old.send(Message::Text(serde_json::to_string(&ControlMessage::TokenUpdate { token: "STALE".into() }).unwrap())).await.unwrap();
+    old.close().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(Ok(msg)) = old_reader.next().await {
+            if matches!(msg, Message::Close(_)) { break; }
+        }
+    }).await.unwrap();
+    let sess = ctx.sessions.get("CTRL-SWAP").await.unwrap();
+    assert_eq!(&*sess.token.lock().await, "NEW");
+    assert!(!sess.control_tx.lock().await.is_closed());
+}
+
+#[tokio::test]
+async fn presenter_rejects_sid_with_html_attributes() {
+    let (base, _, _) = start_relay(2).await;
+    let response = reqwest::get(format!("{base}/r/TEST%22%20data-audit%3D%22injected/presenter")).await.unwrap();
+    assert_eq!(response.status(), 400);
+    assert!(!response.text().await.unwrap().contains("data-audit"));
 }
 
 /// 起一个 loopback relay,返回 (http base, ws base, ctx)。
