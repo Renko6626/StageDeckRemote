@@ -361,6 +361,11 @@ pub fn slide_state() -> Result<SlideState, String> {
         Err(_) => return Ok(SlideState::unavailable()),
     };
     let pres = com::get_obj(&app, "ActivePresentation").map_err(|_| "没有活动演示文稿".to_string())?;
+    // 触碰一次 VBProject：PowerPoint 默认**不会**在打开文稿时加载 VBA 工程，
+    // 必须有人主动访问宏工程它才加载；否则后续 trigger_action 的 Application.Run
+    // 会报 "Sub or function not defined"（即使已启用宏、按宏列表能列出宏）。
+    // 这里只是读取，失败（例如未开启信任设置）不影响本函数的其余逻辑。
+    let _ = com::get_obj(&pres, "VBProject");
     let slides = com::get_obj(&pres, "Slides")?;
     let total = com::get_i32(&slides, "Count").unwrap_or(0);
 
