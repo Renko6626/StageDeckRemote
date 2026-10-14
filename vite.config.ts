@@ -22,7 +22,10 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // 本仓库是 workspace 布局，Rust 的 target/ 在仓库根目录而不是 src-tauri 下，
+      // 只忽略 src-tauri 的话，Windows 上 `pnpm tauri dev` 编译期间 Vite 的
+      // 文件监视器会撞到被 cargo 锁定的产物，抛 EBUSY 崩溃。
+      ignored: ["**/src-tauri/**", "**/target/**"],
     },
   },
 
