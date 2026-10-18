@@ -200,7 +200,7 @@
   var statusPending = false;
   var slidePending = false;
   function pollSlide() {
-    if (slidePending || state.tokenInvalid) return;
+    if (slidePending || state.tokenInvalid || state.actionPending) return;
     slidePending = true;
     api("api/slide_state?token=" + encodeURIComponent(token)).then(handle401)
       .then(function (r) { if (r && r.ok) return r.json(); })
@@ -326,6 +326,8 @@
       flashNotice("已被锁定 / 已失去控制权");
     } else if (r && r.status === 409 && r.reason === "op_in_flight") {
       flashNotice("已送达，PPT 处理中；勿重复点击");
+    } else if (r && r.status === 409 && r.reason === "ppt_busy") {
+      flashNotice("PowerPoint 通道正忙，本次操作未执行；请稍后再按，持续忙碌请导播检查弹窗");
     } else if (r && !r.ok) {
       flashNotice(r.status === 504
         ? "执行超时，结果未知；请导播检查 PPT 弹窗，勿重复点击"

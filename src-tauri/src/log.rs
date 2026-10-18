@@ -65,11 +65,19 @@ async fn run_operation_timeout<T: Send + 'static>(
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = format!("操作#{id} {label}");
-    let permit = state.ppt_gate.clone().try_acquire_owned().map_err(|_| {
-        let error = "PowerPoint 忙，前一调用尚未结束；请检查弹窗，勿重复点击".to_string();
-        event(&state, format!("{label} 拒绝：{error}"));
-        error
-    })?;
+    // Let a short status probe finish before rejecting an explicit operation.
+    // Waiting on the existing semaphore also prevents new probes from overtaking it.
+    let permit = match tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        state.ppt_gate.clone().acquire_owned(),
+    ).await {
+        Ok(Ok(permit)) => permit,
+        _ => {
+            let error = "PowerPoint 忙，通道占用超过 500ms，本次操作未执行；请稍后重试，持续忙碌请检查弹窗".to_string();
+            event(&state, format!("{label} 拒绝：{error}"));
+            return Err(error);
+        }
+    };
     event(&state, format!("{label} 开始"));
     let worker_state = state.clone();
     let worker_label = label.clone();
@@ -117,6 +125,20 @@ pub fn ppt_probe(state: &AppState, error: Option<String>) {
 mod tests {
     use super::*;
     use std::{sync::Arc, time::Duration};
+
+    #[tokio::test]
+    async fn operation_waits_for_a_short_status_probe() {
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let state = Arc::new(AppState::new("secret".into(), 8787, tx));
+        let probe = state.ppt_gate.clone().acquire_owned().await.unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            drop(probe);
+        });
+        let result = run_operation(state, "宏 Answer".into(), || Ok("executed")).await;
+        release.await.unwrap();
+        assert_eq!(result.unwrap(), "executed");
+    }
 
     #[tokio::test]
     async fn timed_out_macro_stays_busy_and_logs_its_late_result() {

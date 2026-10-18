@@ -3,6 +3,18 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.2.7] - 2026-10-18
+
+### Fixed
+
+- 主动操作最多等待 PowerPoint 通道释放 500ms，避免短暂状态探测导致操作立即返回 `409 ppt_busy`；通道持续占用时仍拒绝执行。
+- 手机发送操作期间暂停新的 PowerPoint 状态探测，忙碌时明确提示本次操作未执行。
+
+### Known limitations
+
+- 本版未修改 PPT 文件及其中的 VBA 模拟点击逻辑；动画目标退场后再次点击导致误翻页的问题仍需单独处理。
+- 尚未进行 Windows 安装及 PowerPoint 实机验收。
+
 ## [0.2.6] - 2026-10-13
 
 ### Fixed
