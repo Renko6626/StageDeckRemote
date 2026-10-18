@@ -30,7 +30,7 @@
   - **GET** 请求：token 放 **query**，如 `?token=xxxx`。
   - **POST** 请求：token 放 **JSON body**。
   - Relay 入口从 **query** 读取 token，因此 Relay POST 请求需同时在 query 和 JSON body 中携带 token。
-  - **0.2.7 已知问题：** 内嵌手机页的 POST 目前只在 JSON body 中传 token，没有补上 Relay 所需的 query token，动作请求会被中继以 `401 invalid_token` 拒绝。页面和 GET 请求不受此处不一致影响；LAN POST 仍只需 JSON body。本轮文档更新未修复该问题。
+  - **0.2.7 Relay 补充修复：** 初始 Relay 附件的手机 POST 仅传 JSON token，会被中继以 401 拒绝。当前源码的统一 `api()` 已在 Relay POST 中补上 query token，并保留 JSON token；GET 和 LAN POST 不变。部署需使用 `post-token-fix` 附件、重启中继并刷新手机页面，Windows 0.2.7 安装包无需重装。
 - **请求体**：POST 一律 `Content-Type: application/json`，64 KiB 上限（LAN 的 `DefaultBodyLimit` 与 Relay 隧道两端一致）。
 - **响应体**：除截图(二进制 JPEG)、MJPEG 流、页面/静态资源外，均为 JSON。
 - **单控制端**：点击/翻页/黑屏/恢复/宏/锁/解锁额外要求请求体 `client_id` 等于
@@ -301,7 +301,7 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 | 宏触发 | ✅ 已实现 `POST /api/action`（COM `Application.Run`，shape 由服务端反查宏名） |
 | 单控制端独占 | ✅ 已实现 `is_controller` 门控控制动作（先到为主、>10s 无心跳可被接管；消息接口除外） |
 | 快捷消息 | ✅ 已实现 `GET /api/messages` + `POST /api/message`（id-only，text 服务端反查） |
-| Relay 模式 | 已实现传输与页面服务；0.2.7 手机 POST 的 token 不一致问题见 §1.2 |
+| Relay 模式 | 已实现；0.2.7 需使用 `post-token-fix` 中继附件，鉴权说明见 §1.2 |
 | Relay session 宽限期回收 | ✅ 每 10 秒检查，控制连接已断且超过宽限期的会话会被回收（默认宽限期 60 秒） |
 
 ---

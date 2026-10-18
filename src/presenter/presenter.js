@@ -76,6 +76,8 @@
   var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
   function api(path, body, timeoutMs) {
+    // Relay checks the query token before tunneling; the director checks the JSON token.
+    if (body && IS_RELAY) path += (path.indexOf("?") === -1 ? "?" : "&") + "token=" + encodeURIComponent(token);
     var opts = body
       ? {
           method: "POST",

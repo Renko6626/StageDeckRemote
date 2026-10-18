@@ -336,7 +336,7 @@ LAN 直连之外，可经一台**校园网内中继服务器**（部署在 PKU C
   默认监听 `0.0.0.0:8080`。presenter 静态资源用 `include_str!` **编进 relay 二进制**——
   CLAB 不需要额外放前端文件；改 `src/presenter/*` 要同时重编**导播与 relay 两个二进制**。
 
-0.2.7 的内嵌手机页 POST 仅在 JSON body 中携带 token，而 Relay 入口从 query 校验 token，导致动作请求被中继以 401 拒绝；GET 页面、状态和画面不受该处不一致影响。当前使用限制见 [协议文档 §1.2](protocol.md#12-共通规则)，启动教程见 [README](../README.md#relay-简单教程)。
+0.2.7 初始 Relay 附件的手机 POST 仅传 JSON token，与中继入口的 query token 校验不一致。当前源码的统一 `api()` 为 Relay POST 补上 URL token，并保留 JSON token 供导播验证。该改动由中继内嵌页面提供，更新 `post-token-fix` 中继附件并刷新手机页面即可使用，Windows 安装包无需重装。鉴权说明见 [协议文档 §1.2](protocol.md#12-共通规则)，启动教程见 [README](../README.md#relay-简单教程)。
 
 ### 11.1 Cargo workspace 结构
 

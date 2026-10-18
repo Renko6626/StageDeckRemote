@@ -5,6 +5,11 @@
 
 ## [0.2.7] - 2026-10-18
 
+### Relay 补充修复（2026-10-19）
+
+- 手机端统一请求函数为 Relay POST 补齐 URL token，保留 JSON token，修复中继返回 `401 invalid_token` 的问题。LAN 请求不变。
+- v0.2.7 Release 补充 `stagedeck-relay-linux-x86_64-0.2.7-post-token-fix` 及独立校验文件；旧附件保留。替换并重启 Relay、刷新手机页面即可生效，Windows 安装包无需重装。
+
 ### Fixed
 
 - 主动操作最多等待 PowerPoint 通道释放 500ms，避免短暂状态探测导致操作立即返回 `409 ppt_busy`；通道持续占用时仍拒绝执行。

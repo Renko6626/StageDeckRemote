@@ -2,7 +2,8 @@ import html from './presenter.html?raw';
 import script from './presenter.js?raw';
 import { afterEach, expect, it, vi } from 'vitest';
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+const initialUrl = window.location.href;
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState(null, '', initialUrl); });
 
 function mountPresenter(
   slideResponse: () => Promise<Response>,
@@ -122,9 +123,10 @@ it('recovers to LINK on the next successful heartbeat without re-arming', async 
 // ── 幂等重试(spec §二) ──
 type Call = { url: string; body: any; signal: AbortSignal };
 /** 挂载并让 status/slide 正常;返回对 /api/next 的调用记录与可编程的应答队列。 */
-async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status: number; reason: string }>) {
+async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status: number; reason: string }>, baseHref = '/presenter/') {
   vi.useFakeTimers();
   document.documentElement.innerHTML = html;
+  document.querySelector('base')!.setAttribute('href', baseHref);
   const calls: Call[] = [];
   vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => {
     if (url.includes('slide_state')) return okSlide();
@@ -143,6 +145,22 @@ async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status:
   expect(nextBtn.disabled).toBe(false);
   return { calls, nextBtn, banner: () => document.getElementById('dir-banner-text')?.textContent };
 }
+
+it.each([
+  ['/presenter/', '/presenter/api/next', false],
+  ['/r/PROM-2026/presenter/', '/r/PROM-2026/presenter/api/next', true],
+] as const)('sends POST authentication for %s', async (baseHref, expectedPath, relay) => {
+  const token = 'token+a/b?c=d&中文';
+  window.history.replaceState(null, '', '/?token=' + encodeURIComponent(token));
+  const { calls, nextBtn } = await mountForOps([200], baseHref);
+  nextBtn.click();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(calls).toHaveLength(1);
+  const url = new URL(calls[0].url, document.baseURI);
+  expect(url.pathname).toBe(expectedPath);
+  expect(url.searchParams.get('token')).toBe(relay ? token : null);
+  expect(calls[0].body.token).toBe(token);
+});
 
 it('retries a hung page-turn twice with the same op_id, then succeeds silently', async () => {
   const { calls, nextBtn, banner } = await mountForOps(['hang', 'hang', 200]);

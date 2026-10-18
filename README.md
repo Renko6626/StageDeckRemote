@@ -22,7 +22,7 @@
 
 Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播电脑和手机都必须能访问这台服务器的端口；使用校内服务器时，两端也需接入校园网或相应 VPN。
 
-**0.2.7 的已知限制：** 手机动作 POST 请求与 Relay 入口的 token 传递方式不一致，会导致动作请求被中继以 `401 invalid_token` 拒绝。下面可用于启动中继、连接导播和查看页面/画面；当前需要控制 PPT 时优先使用 LAN。原因见 [协议说明](docs/protocol.md#12-共通规则)，本轮文档更新未修复此问题。
+**0.2.7 Relay 补充修复：** 初始 Relay 附件的手机 POST 缺少 URL token，会导致动作请求返回 401。当前源码已修复，下面使用带 `post-token-fix` 后缀的新附件。已有部署需替换 Relay、重启中继并刷新手机页面；Windows 0.2.7 安装包无需重装。鉴权规则见 [协议说明](docs/protocol.md#12-共通规则)。
 
 ### 1. 下载并启动中继
 
@@ -31,7 +31,7 @@ Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播�
 ```bash
 mkdir -p stagedeck-relay
 cd stagedeck-relay
-curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.7/stagedeck-relay-linux-x86_64-0.2.7 -o relay
+curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.7/stagedeck-relay-linux-x86_64-0.2.7-post-token-fix -o relay
 chmod +x relay
 ./relay
 ```
@@ -185,6 +185,7 @@ EnumWindows 窗口枚举（`window_manager.rs`）、PowerPoint COM 控制（`ppt
 
 关键演进：
 
+- **v0.2.7 Relay 补充附件**：修复手机 POST 请求缺少 URL token 导致的中继 401；需更新 Relay 并刷新手机页面。
 - **v0.2.7**：主动 COM 操作最多等待通道释放 500ms，减少与短暂状态探测冲突产生的拒绝；手机发送操作期间暂停新探测。宏请求仍忙时提示「本次操作未执行」。
 - **v0.2.6**：修复 Relay 重连、静止画面保留和连接接管，完善设置保存与只读 admin 状态页。
 - **v0.2.5**：增加操作去重重试、连接状态分级和 Relay 存活探测。

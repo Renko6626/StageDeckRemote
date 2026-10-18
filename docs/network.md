@@ -140,10 +140,10 @@
 
 > 部署目标：让 relay binary 作为 systemd 服务长跑，监听 `0.0.0.0:8080`。
 
-1. **拿二进制**：从 [v0.2.7 Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.7) 下载 `stagedeck-relay-linux-x86_64-0.2.7`，在服务器上安装为 `/usr/local/bin/stagedeck-relay`：
+1. **拿二进制**：从 [v0.2.7 Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.7) 下载 `stagedeck-relay-linux-x86_64-0.2.7-post-token-fix`，在服务器上安装为 `/usr/local/bin/stagedeck-relay`：
 
    ```bash
-   sudo install -m 755 stagedeck-relay-linux-x86_64-0.2.7 /usr/local/bin/stagedeck-relay
+   sudo install -m 755 stagedeck-relay-linux-x86_64-0.2.7-post-token-fix /usr/local/bin/stagedeck-relay
    sudo mkdir -p /etc/stagedeck-relay
    ```
 
@@ -217,21 +217,21 @@
 
 ### 7.4 开演流程（Relay 模式）
 
-**0.2.7 当前限制：** 内嵌手机页的动作 POST 只携带 JSON token，Relay 入口却要求 query token，因此动作请求会返回 `401 invalid_token`。下面的步骤可用于连接和查看画面；修复前需要主持人控制 PPT 时请使用 LAN。详细契约见 [协议文档 §1.2](protocol.md#12-共通规则)，本轮文档更新未改变软件行为。
+**版本要求：** 0.2.7 初始 Relay 附件存在手机 POST 缺少 query token 的问题，会返回 `401 invalid_token`。请使用 `post-token-fix` 附件或修复后的源码构建；替换后重启中继，并刷新手机页面以加载新脚本。Windows 0.2.7 安装包无需重装。详细契约见 [协议文档 §1.2](protocol.md#12-共通规则)。
 
 1. 路由器 / 场馆 WiFi 该启的启，导播 PC **接入校园网**（任何途径都行：有线 + VPN、场馆 WiFi 出口可达校内）。
 2. 启动 StageDeck Remote → 看 Settings 里 **Relay 状态** 变成 `connected`（绿色●）；不连绿就回 §7.5 排障。
 3. 二维码面板上切到 **Relay** 模式，让它生成形如
    `http://<relay-host>:8080/r/PROM-2026/presenter?token=xxxx` 的码。
 4. 主持人手机扫这个码（手机也要进校园网；可走校园 WiFi 或校园 VPN）。
-5. 在计划用于控制前，先确认所用版本已解决上述鉴权问题，再验证释放控制、坐标点击和翻页。0.2.7 不应因页面已打开、画面可见就判定控制可用。
+5. 确认已更新上述修复附件后，让主持人释放控制，核对坐标点击和翻页；不能只凭页面打开、画面可见判定控制可用。
 
 ### 7.5 Relay 模式排障
 
 | 症状 | 可能原因 | 处理 |
 | --- | --- | --- |
 | Settings 里 Relay 状态卡在 `connecting` | base_url 写错 / relay 不在校园网可达 / 防火墙 | 在导播 PC 上 `curl http://<relay-host>:8080/` 看通不通；不通先回 §7.2 第 4-5 步 |
-| 页面和画面能打开，手机操作却返回 401 | 0.2.7 手机 POST 的 token 位置与 Relay 校验不一致；也可能是访问码已重置 | 先核对版本及 §7.4 的限制；当前可切换 LAN，访问码变化后需重新扫码 |
+| 页面和画面能打开，手机操作却返回 401 | 仍在使用 0.2.7 初始 Relay 附件；或访问码已重置 | 按 §7.4 替换修复附件、重启并刷新手机页面；访问码变化后需重新扫码 |
 | 宏请求返回 409，提示本次操作未执行 | `ppt_busy`：等待 COM 通道 500ms 后仍被占用 | 稍后重新按；持续忙碌时查看导播日志和 PowerPoint 弹窗 |
 | 提示「已送达，PPT 处理中」 | `op_in_flight`：同一操作仍在执行 | 等待并核对结果，不要重复发起新操作 |
 | 状态 `error: secret_mismatch` | 同一个 session_id 已被其他 secret 注册过 | 换 session_id，或在 relay 上重启服务清掉旧 session（v1 无持久化） |
