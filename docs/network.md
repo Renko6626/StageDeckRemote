@@ -136,10 +136,18 @@
 
 ### 7.2 一次性准备 C：在中继服务器上部署 relay
 
+只想先启动试用时，可按 [README 的 Relay 教程](../README.md#relay-简单教程) 下载 Linux x86-64 二进制，`chmod +x relay` 后执行 `./relay`；默认监听 8080，按 `Ctrl+C` 停止。以下是需要持续运行、开机启动时的 systemd 部署方式。
+
 > 部署目标：让 relay binary 作为 systemd 服务长跑，监听 `0.0.0.0:8080`。
 
-1. **拿二进制**：在开发机 `cargo build --release -p relay` 编出 `target/release/relay`，
-   `scp` 到中继服务器（如 `/usr/local/bin/stagedeck-relay`）。
+1. **拿二进制**：从 [v0.2.7 Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.7) 下载 `stagedeck-relay-linux-x86_64-0.2.7`，在服务器上安装为 `/usr/local/bin/stagedeck-relay`：
+
+   ```bash
+   sudo install -m 755 stagedeck-relay-linux-x86_64-0.2.7 /usr/local/bin/stagedeck-relay
+   sudo mkdir -p /etc/stagedeck-relay
+   ```
+
+   也可在开发机用 `cargo build --release -p relay` 编出 `target/release/relay` 后上传。Windows 安装包中不包含服务器上需要启动的 Relay 进程。
 2. **配置**：建 `/etc/stagedeck-relay/config.toml`（可选；缺省值能跑）：
 
    ```toml
@@ -172,14 +180,23 @@
    WantedBy=multi-user.target
    ```
 
-   `systemctl enable --now stagedeck-relay` 启用 + 启动；`journalctl -u stagedeck-relay -f`
-   看运行日志。
+   保存单元文件后执行：
 
-4. **健康检查**：本机 `curl http://127.0.0.1:8080/r/SANITY/api/status?token=anything`
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now stagedeck-relay
+   sudo systemctl status stagedeck-relay
+   sudo journalctl -u stagedeck-relay -f
+   ```
+
+   最后一条持续显示日志，按 `Ctrl+C` 只退出日志查看，不会停止服务。停止中继用 `sudo systemctl stop stagedeck-relay`；更新二进制或配置后用 `sudo systemctl restart stagedeck-relay` 生效。重启会中断现有连接，安排在非演示时段。
+
+   临时使用其他配置路径时：`STAGEDECK_RELAY_CONFIG=/绝对路径/relay.toml ./relay`。配置文件不存在、不可读或格式错误时，程序会退回默认值；启动日志的 `listen` 与 `config_path` 用于核对实际监听地址和配置路径。
+
+4. **健康检查**：本机 `curl -i 'http://127.0.0.1:8080/r/SANITY/api/status?token=anything'`
    应返回 `502 session_unavailable`（说明 axum 起来了、路由认得，只是没注册过 `SANITY` 会话）。
 
-5. **校园网内可达性**：从另一台校园网内的机器 `curl http://<relay-host>:8080/...`
-   应能连通。**不需要公网 IP**——v1 不上 TLS，纯校园内 HTTP/WS。
+5. **校园网内可达性**：将上面的 `127.0.0.1` 换成服务器 IP，从另一台校园网内的机器执行同一检查；服务器防火墙和安全组需放行 TCP 8080。根路径 `/` 没有页面，404 不表示中继未启动。**不需要公网 IP**，当前客户端使用校内 HTTP/WS。
 
 设置 `admin_token` 后，访问 `http://<relay-host>:8080/admin/status?token=<admin_token>`
 查看会话、控制/推流连接、接收帧数及等待请求。此页只读，每 5 秒刷新；`/admin` 没有页面。
@@ -200,18 +217,23 @@
 
 ### 7.4 开演流程（Relay 模式）
 
+**0.2.7 当前限制：** 内嵌手机页的动作 POST 只携带 JSON token，Relay 入口却要求 query token，因此动作请求会返回 `401 invalid_token`。下面的步骤可用于连接和查看画面；修复前需要主持人控制 PPT 时请使用 LAN。详细契约见 [协议文档 §1.2](protocol.md#12-共通规则)，本轮文档更新未改变软件行为。
+
 1. 路由器 / 场馆 WiFi 该启的启，导播 PC **接入校园网**（任何途径都行：有线 + VPN、场馆 WiFi 出口可达校内）。
 2. 启动 StageDeck Remote → 看 Settings 里 **Relay 状态** 变成 `connected`（绿色●）；不连绿就回 §7.5 排障。
 3. 二维码面板上切到 **Relay** 模式，让它生成形如
    `http://<relay-host>:8080/r/PROM-2026/presenter?token=xxxx` 的码。
 4. 主持人手机扫这个码（手机也要进校园网；可走校园 WiFi 或校园 VPN）。
-5. 自检：让主持人**释放控制**，点一下预览图、翻一次页。
+5. 在计划用于控制前，先确认所用版本已解决上述鉴权问题，再验证释放控制、坐标点击和翻页。0.2.7 不应因页面已打开、画面可见就判定控制可用。
 
 ### 7.5 Relay 模式排障
 
 | 症状 | 可能原因 | 处理 |
 | --- | --- | --- |
 | Settings 里 Relay 状态卡在 `connecting` | base_url 写错 / relay 不在校园网可达 / 防火墙 | 在导播 PC 上 `curl http://<relay-host>:8080/` 看通不通；不通先回 §7.2 第 4-5 步 |
+| 页面和画面能打开，手机操作却返回 401 | 0.2.7 手机 POST 的 token 位置与 Relay 校验不一致；也可能是访问码已重置 | 先核对版本及 §7.4 的限制；当前可切换 LAN，访问码变化后需重新扫码 |
+| 宏请求返回 409，提示本次操作未执行 | `ppt_busy`：等待 COM 通道 500ms 后仍被占用 | 稍后重新按；持续忙碌时查看导播日志和 PowerPoint 弹窗 |
+| 提示「已送达，PPT 处理中」 | `op_in_flight`：同一操作仍在执行 | 等待并核对结果，不要重复发起新操作 |
 | 状态 `error: secret_mismatch` | 同一个 session_id 已被其他 secret 注册过 | 换 session_id，或在 relay 上重启服务清掉旧 session（v1 无持久化） |
 | 状态 `error: bad_sid` | session_id 不符合 `[A-Z0-9-]{4,16}` | 重新填、保存、重启 |
 | 状态 `connected` 但手机扫码 502 | relay 觉得没人在；多半是导播又掉了 / 二维码里 `<sid>` 拼错了 | 让导播看 Settings，确认还是 connected；二维码用 QR 面板生成、别手抄 |

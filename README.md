@@ -5,6 +5,83 @@
 
 完整需求与设计见 [`docs/project.md`](docs/project.md)。
 
+## 下载与快速使用
+
+当前版本为 **v0.2.7**，安装包、Linux Relay 和校验文件见 [GitHub Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.7)。
+
+局域网直连不需要启动 Relay：
+
+1. 在 Windows 导播电脑安装 StageDeck Remote，打开 PowerPoint 文稿并开始放映。
+2. 手机与导播电脑接入能互相访问的同一局域网。选择要捕获的 PPT 窗口，打开「远程控制」。
+3. 二维码面板选择 **LAN**，手机扫码，在手机端点「释放控制」后即可操作。
+4. 使用宏按钮时，文稿自身的宏也需要能够在 PowerPoint 中运行。先确认电脑上能正常使用这些按钮。
+
+扫码地址通常形如 `http://192.168.50.10:8787/presenter?token=...`。页面打不开时，检查导播电脑防火墙和 Wi-Fi 客户端隔离；详细步骤见 [网络手册](docs/network.md)。
+
+## Relay 简单教程
+
+Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播电脑和手机都必须能访问这台服务器的端口；使用校内服务器时，两端也需接入校园网或相应 VPN。
+
+**0.2.7 的已知限制：** 手机动作 POST 请求与 Relay 入口的 token 传递方式不一致，会导致动作请求被中继以 `401 invalid_token` 拒绝。下面可用于启动中继、连接导播和查看页面/画面；当前需要控制 PPT 时优先使用 LAN。原因见 [协议说明](docs/protocol.md#12-共通规则)，本轮文档更新未修复此问题。
+
+### 1. 下载并启动中继
+
+在 Linux 服务器终端执行：
+
+```bash
+mkdir -p stagedeck-relay
+cd stagedeck-relay
+curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.7/stagedeck-relay-linux-x86_64-0.2.7 -o relay
+chmod +x relay
+./relay
+```
+
+未另行配置时默认监听 `0.0.0.0:8080`。终端需要保持运行，按 `Ctrl+C` 停止。服务器防火墙或安全组需允许导播和手机访问 TCP 8080。
+
+另开一个终端检查服务：
+
+```bash
+curl -i 'http://127.0.0.1:8080/r/SANITY/api/status?token=anything'
+```
+
+没有导播注册 `SANITY` 会话时，预期返回 **502** 和 `session_unavailable`，说明中继已启动。根路径 `/` 没有首页，返回 404 属正常情况。
+
+### 2. 让导播端连接中继
+
+假设服务器地址为 `10.0.0.20`，在导播端设置的 **Relay** 区域填写：
+
+| 字段 | 示例与说明 |
+| --- | --- |
+| 地址（base_url） | `ws://10.0.0.20:8080`；替换为两端能访问的服务器地址，不能填写 `0.0.0.0` 或服务器的 `127.0.0.1` |
+| Session ID | `PROM-2026`；4–16 位大写字母、数字或连字符，不同活动使用不同 ID |
+| 预共享密钥（secret） | 自定的非空密钥，用于防止其他导播占用同一 Session ID |
+
+点「保存」后**重启导播应用**，等待 Relay 状态变为 `connected`。保存设置不会立即切换当前连接；关闭 Relay 也需要重启导播才能生效。
+
+二维码面板选择 **Relay** 后，手机扫码进入形如 `http://10.0.0.20:8080/r/PROM-2026/presenter?token=...` 的地址。地址中的 token 由软件生成，与上面的 secret 不同。当前客户端仅支持 `ws://`，不支持 `wss://`。
+
+### 3. 自定义端口和长期运行
+
+需要改端口时，在 `relay` 所在目录新建 `relay.toml`：
+
+```toml
+listen = "0.0.0.0:8080"
+session_grace_secs = 60
+tunnel_timeout_secs = 30
+# 可选：启用只读状态页，先替换为独立管理密钥
+# admin_token = "replace-with-your-own-admin-token"
+```
+
+停止原进程后，指定配置启动：
+
+```bash
+STAGEDECK_RELAY_CONFIG="$PWD/relay.toml" ./relay
+```
+
+不指定环境变量时，程序读取 `/etc/stagedeck-relay/config.toml`；配置缺失或无法解析时会使用默认值，请核对启动日志中的 `listen` 和 `config_path`。
+
+配置 `admin_token` 后，可访问 `http://服务器地址:8080/admin/status?token=管理密钥` 查看连接状态；未配置时此页返回 404。要让中继在终端关闭后继续运行、开机自动启动，按 [网络手册 §7.2](docs/network.md#72-一次性准备-c在中继服务器上部署-relay) 配置 systemd。更新中继时需替换二进制并重启进程，单独更新 Windows 安装包不会更新中继内嵌的手机页面。
+
 ## 架构
 
 **默认 LAN 直连**：
@@ -98,7 +175,7 @@ pnpm typecheck      # 仅类型检查前端
 - 在 Linux 上构建完整 Tauri 应用还需系统库 `webkit2gtk` / `librsvg`
   （见 <https://tauri.app/start/prerequisites/>）。生产构建建议在 Windows 上进行。
 
-## 当前状态（v0.2.0）
+## 当前状态（v0.2.7）
 
 核心闭环已打通并经多轮演进。Win32 原生能力均已实现为 `#[cfg(windows)]` 真实分支（非 Windows 为占位
 stub）：WGC/GDI BitBlt 截图（`capture.rs` + `capture_session.rs`）、SendInput 输入（`input.rs`）、
@@ -108,10 +185,15 @@ EnumWindows 窗口枚举（`window_manager.rs`）、PowerPoint COM 控制（`ppt
 
 关键演进：
 
+- **v0.2.7**：主动 COM 操作最多等待通道释放 500ms，减少与短暂状态探测冲突产生的拒绝；手机发送操作期间暂停新探测。宏请求仍忙时提示「本次操作未执行」。
+- **v0.2.6**：修复 Relay 重连、静止画面保留和连接接管，完善设置保存与只读 admin 状态页。
+- **v0.2.5**：增加操作去重重试、连接状态分级和 Relay 存活探测。
 - **v0.1.16** — 截图/推流改"变化驱动 + 单点编码 + 推送"。主持人 MJPEG 长连、导播 Tauri Channel 推 canvas、
   `frame_broker` 复用一份扇出，静止时 ≈ 零 CPU。详见 [ADR-0006](docs/adr/0006-capture-stream-broker.md)。
 - **v0.2.0** — **Relay 架构**。引入 `crates/protocol` 共享 schema、`crates/relay` Linux 二进制、
   导播 `relay_client` WS 控制隧道 + WS 推流、双模并存（QR 切换 LAN/Relay）。集成测试可在 Linux loopback
   端到端跑通。详见 [ADR-0007](docs/adr/0007-relay-hybrid-tunnel.md) 与 [`docs/architecture.md` §11](docs/architecture.md)。
 
-路线图见 [`docs/project.md`](docs/project.md) §14–§15。
+更新记录见 [CHANGELOG.md](CHANGELOG.md)。本版已完成 Windows 安装包与 Linux Relay 构建，尚未进行 Windows 安装及 PowerPoint 实机验收。
+
+文稿内部的 VBA 模拟点击、失效宏绑定和外置音效仍需由文稿作者核对，0.2.7 未修改 PPT 文件。已检查样本及未决事项见 [VBA 兼容性记录](docs/vba/compatibility-backlog.md)。路线图见 [`docs/project.md`](docs/project.md) §14–§15。

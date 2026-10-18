@@ -29,15 +29,17 @@
 - **鉴权**：每个请求都要带 `token`（应用启动时随机生成，可在 Settings 重置）。
   - **GET** 请求：token 放 **query**，如 `?token=xxxx`。
   - **POST** 请求：token 放 **JSON body**。
-  - Relay 模式下 relay 边缘也做一次 token 校验（快速 reject），导播侧仍纵深校验。
+  - Relay 入口从 **query** 读取 token，因此 Relay POST 请求需同时在 query 和 JSON body 中携带 token。
+  - **0.2.7 已知问题：** 内嵌手机页的 POST 目前只在 JSON body 中传 token，没有补上 Relay 所需的 query token，动作请求会被中继以 `401 invalid_token` 拒绝。页面和 GET 请求不受此处不一致影响；LAN POST 仍只需 JSON body。本轮文档更新未修复该问题。
 - **请求体**：POST 一律 `Content-Type: application/json`，64 KiB 上限（LAN 的 `DefaultBodyLimit` 与 Relay 隧道两端一致）。
 - **响应体**：除截图(二进制 JPEG)、MJPEG 流、页面/静态资源外，均为 JSON。
-- **单控制端**：所有动作端点（点击/翻页/黑屏/恢复/宏/锁/解锁/消息）额外要求请求体 `client_id` 等于
+- **单控制端**：点击/翻页/黑屏/恢复/宏/锁/解锁额外要求请求体 `client_id` 等于
   `active_client_id`（先到为主、控制端 >10s 无心跳后可被接管；v0.2.4 起由 4s 放宽，一次 Wi‑Fi 抖动不丢控制权）。
 - **幂等 `op_id`**（v0.2.4+）：六个动作端点（`click`/`next`/`prev`/`black`/`restore`/`action`）的请求体可带
   `"op_id": "<client_id>-<seq>"`。服务端保留最近 64 条、60s 内的结果：同 `op_id` 已执行完 → 原样回放上次响应；
   仍在执行 → `409 op_in_flight`。不带 `op_id` 行为不变。**门控失败（401/403）不进缓存**，解锁后同 id 可再执行。
-  手机端在网络错误 / 超时 / 502 / 503 时用同一 `op_id` 重发（最多 3 次），任何其它状态码都视为"已送达"停止重发。
+  手机端在网络错误 / 超时 / 502 / 503 时用同一 `op_id` 重发（最多 3 次），任何其它状态码都视为"已送达"停止重发。收到响应只表示请求已送达，不等于执行成功。
+- **COM 忙碌处理（v0.2.7）**：状态探测与 COM 操作共用 `ppt_gate`。主动 COM 操作最多等待通道释放 500ms；状态探测拿不到通道时直接返回 `busy:true`。手机发送操作期间暂停新探测，状态心跳继续。宏请求等待后仍未获得通道时返回 `409 ppt_busy`，本次宏未执行。
 
 ### 1.3 信任与三层锁
 
@@ -75,7 +77,7 @@
 
 运行状态。
 
-- 请求：`?token=xxxx`
+- 请求：`?token=xxxx&cid=host-tablet`；`cid` 用于登记心跳和认领控制权，不传时 `is_controller` 为 false。
 - 成功：`200 application/json`
 
 ```json
@@ -85,7 +87,9 @@
   "remote_enabled": true,
   "control_locked": false,
   "presenter_unlocked": true,
-  "active_client_id": "host-tablet",
+  "is_controller": true,
+  "director_message": null,
+  "timer": null,
   "server_time": 1710000000
 }
 ```
@@ -96,7 +100,9 @@
 | `remote_enabled` | bool | 导播总开关（锁层 1） |
 | `control_locked` | bool | 导播强制锁（锁层 2） |
 | `presenter_unlocked` | bool | 主持人本地解锁（锁层 3） |
-| `active_client_id` | string \| null | 当前控制端 |
+| `is_controller` | bool | 本次请求的 `cid` 是否为当前控制端，不暴露其他设备的 ID |
+| `director_message` | object \| null | 最近一条导播消息，包含 `seq`、`text` 和 `at_ms` |
+| `timer` | object \| null | 当前计时状态；未设置时为 null |
 | `server_time` | number | 服务端 Unix 秒 |
 
 - 失败：`401 {"ok":false,"reason":"invalid_token"}`
@@ -139,15 +145,16 @@
 ```json
 {
   "available": true,
+  "busy": false,
   "in_show": true,
   "current": 3,
   "total": 12,
-  "actions": [{ "id": "btnA", "label": "A 选项" }, { "id": "btnB", "label": "B 选项" }]
+  "actions": [{ "id": "btnA", "label": "A 选项", "macro_name": "Choose" }, { "id": "btnB", "label": "B 选项", "macro_name": "Choose" }]
 }
 ```
 
-- 字段：`available` = PowerPoint 可达；`in_show` = 在放映态；`actions` = 当前页 `Shape.ActionSettings(ppMouseClick).Action == 8`（运行宏）的 shape 列表；`id` = shape name，传给 §2.10 的 `action`。
-- 失败：`401 invalid_token`。PowerPoint 不可达时不报错，返回 `{available:false}`。
+- 字段：`available` = PowerPoint 可达；`busy` = COM 通道被占用或本次读取超时；`in_show` = 在放映态；`actions` = 当前页 `Shape.ActionSettings(ppMouseClick).Action == 8`（运行宏）的 shape 列表；`id` = shape name，传给 §2.10 的 `action`；`macro_name` 供显示和日志使用。
+- 失败：`401 invalid_token`。PowerPoint 不可达时仍返回 200，`available:false`；忙碌时为 `available:false,busy:true`，不等于网络断开。读取超过 2 秒返回忙碌状态，后台 COM 调用仍持有通道直到实际结束。
 
 ### 2.7 `POST /api/click`
 
@@ -193,18 +200,19 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 - 成功：`200 {"ok":true}`
 - 放行条件：`click_allowed` + `is_controller`。
 - 实现：`ppt_com::set_black(true/false)`（**走独立 COM 通道，与窗口选择/截图无关**，原 OBS 方案已废弃）。
-- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `500 black_failed`。
+- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `503 black_failed` / `503 restore_failed`。
 
 ### 2.10 `POST /api/action`
 
 触发当前页一个宏 shape（由 §2.6 `slide_state` 返回的 `id` 指定）。
 
 - 请求体：`{ "token": "xxxx", "client_id": "host-tablet", "shape": "btnA" }`
-- 成功：`200 {"ok":true, "macro":"..."}`（`macro` 是服务端实际触发的宏名，供日志展示）
+- 成功：`200 {"ok":true}`。实际宏名记录在导播日志中；调用正常返回不能证明宏内部的动画或玩法操作成功。
 - 放行条件：`click_allowed` + `is_controller`。
 - 实现：服务端**根据 shape name 重新读绑定的宏名**（不信任客户端传入），调 `Application.Run(macro, shape)`；
-  无参 fallback 兼容老模板。
-- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `500 action_failed` / `500 action_panicked`。
+  仅在 `DISP_E_BADPARAMCOUNT`（参数数量被拒绝）时回退无参调用，运行时异常不自动重跑宏。
+- 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `409 ppt_busy` / `409 op_in_flight` / `500 action_failed` / `504 action_timeout`。
+- `ppt_busy` 表示本次宏未执行；稍后重新按按钮会生成新的 `op_id`。`op_in_flight` 表示同一次请求仍在执行，不应再发起新操作。宏执行超过 8 秒返回 `action_timeout`，结果未知，后台调用与通道占用会保留到实际结束。
 
 ### 2.11 `POST /api/lock` · `POST /api/unlock`
 
@@ -255,7 +263,10 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 | 403 | `remote_disabled` | unlock 时远程未开启或被强制锁 |
 | 409 | `ppt_window_not_found` | 未选中目标窗口 |
 | 409 | `op_in_flight` | 同 `op_id` 的请求仍在执行（重发到得太快）；已送达，勿再重发 |
-| 500 | `input_failed` / `black_failed` / `action_failed` / `action_panicked` | 后端执行失败 |
+| 409 | `ppt_busy` | `/api/action` 等待 COM 通道释放 500ms 后仍忙，本次宏未执行 |
+| 500 | `input_failed` / `action_failed` | 翻页、坐标点击或宏执行失败，详见导播日志 |
+| 503 | `black_failed` / `restore_failed` | 黑屏或恢复失败 |
+| 504 | `action_timeout` | 宏执行超过 8 秒，结果未知；后台仍可能继续执行 |
 
 ### 3.1 Relay 模式额外错误码
 
@@ -288,10 +299,10 @@ PowerPoint 黑屏 / 恢复（B 键效果）。
 | 画面传输 | ✅ 已实现 `GET /api/stream.mjpg`（v0.1.16；`snapshot.jpg` 保留兜底） |
 | 黑屏 / 恢复 | ✅ 已实现（PowerPoint COM `set_black`；原 OBS 方案已废弃） |
 | 宏触发 | ✅ 已实现 `POST /api/action`（COM `Application.Run`，shape 由服务端反查宏名） |
-| 单控制端独占 | ✅ 已实现 `is_controller` 门控所有动作（先到为主、>4s 无心跳可被接管） |
+| 单控制端独占 | ✅ 已实现 `is_controller` 门控控制动作（先到为主、>10s 无心跳可被接管；消息接口除外） |
 | 快捷消息 | ✅ 已实现 `GET /api/messages` + `POST /api/message`（id-only，text 服务端反查） |
-| Relay 模式 | ✅ 已实现（v0.2.0；§7） |
-| Relay session 宽限期回收 | 字段就位但后台清理任务未启用（已知限制；spec §13） |
+| Relay 模式 | 已实现传输与页面服务；0.2.7 手机 POST 的 token 不一致问题见 §1.2 |
+| Relay session 宽限期回收 | ✅ 每 10 秒检查，控制连接已断且超过宽限期的会话会被回收（默认宽限期 60 秒） |
 
 ---
 

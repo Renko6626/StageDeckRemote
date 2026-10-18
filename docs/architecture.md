@@ -4,7 +4,7 @@
 > [`project.md`](project.md)，本文不重复需求，只在必要处引用其章节（如 §11）。
 > 决策的"为什么"沉淀在 [`adr/`](adr/) 下的决策记录中。
 >
-> 状态：核心闭环已实现并演进至 v0.2.0。原生截图/输入/窗口枚举 + PowerPoint COM 控制均为
+> 状态：当前发布版本为 v0.2.7。原生截图/输入/窗口枚举 + PowerPoint COM 控制均为
 > `#[cfg(windows)]` 真实分支（非 Windows 为占位 stub），源码已无 `TODO(windows)` 标记。
 > 截图链路在 v0.1.16 从 HTTP 轮询升级为"变化驱动 + 单点编码 + MJPEG/Channel 推送"（§4.1）；
 > v0.2.0 引入 CLAB Relay 作为 LAN 之外的可选传输路径（§11）。
@@ -171,6 +171,15 @@ sequenceDiagram
 调对应 command 后立即再刷新一次。**预览帧不在这条轮询里**——由 `subscribe_preview` 经 Tauri Channel
 由 broker 在变化时推送（§4.1）。导播操作不经网络。
 
+### 4.5 COM 通道与忙碌处理
+
+`AppState.ppt_gate` 是容量为 1 的信号量，供状态探测和 `log::run_operation` 中的 COM 操作共用。
+状态探测无法立即取得通道时返回 `busy:true`。v0.2.7 起，主动 COM 操作最多等待 500ms，给已经开始的短探测留出结束时间；等待后仍忙就拒绝执行。宏 HTTP 接口将这一拒绝映射为 `409 ppt_busy`。
+
+COM 调用在线程池中执行，许可由工作线程持有。状态读取超过 2 秒、操作执行超过 8 秒时，等待方返回忙碌或超时结果，后台调用仍持有许可直到实际结束，避免超时后重叠执行。宏只在明确的参数数量错误时回退无参调用，不自动重跑运行时异常。
+
+手机发送操作期间暂停新的 `slide_state` 探测，状态心跳继续。`409 op_in_flight` 表示同一 `op_id` 仍在执行，与本次宏未执行的 `409 ppt_busy` 分开提示。具体响应见 [协议文档](protocol.md#210-post-apiaction)。
+
 ---
 
 ## 5. 状态模型
@@ -237,11 +246,13 @@ screen_y = top  + round(y * height)
 | `frame_broker.rs` | `watch` 扇出已编码帧；`sample_hash` 变化检测；`mjpeg_part` 公共分帧 | 共享 |
 | `input.rs` | SendInput 模拟鼠标/键盘 | `#[cfg(windows)]` |
 | `ppt_com.rs` | PowerPoint COM 控制：翻页 / 黑屏-恢复 / 取放映态 / 运行宏 | `#[cfg(windows)]` |
+| `macro_execution.rs` | 宏参数数量错误的无参回退策略，运行时异常不重试 | 共享 |
+| `op_cache.rs` | 按 `op_id` 保存执行中与已完成结果，处理手机重复请求 | 共享 |
 | `relay_client.rs` | Relay 模式下的 WS 控制隧道 + WS 推流 + 重连 + token push（§11） | 共享 |
 | `network.rs` | 局域网 IP 发现、访问 URL | 共享 |
 | `config.rs` | 配置持久化（端口、Relay 配置） | 共享 |
 | `presets.rs` | 预制快捷消息默认种子 + 持久化 | 共享 |
-| `log.rs` | 事件日志（内存环形 + stdout） | 共享 |
+| `log.rs` | 事件日志、COM 操作通道等待与执行超时记录 | 共享 |
 
 前端 `src/`：`views/DirectorView.vue` 主面板组合 `components/*`，经 `stores/`(Pinia) 持有状态，
 `utils/api.ts` 封装 IPC；`presenter/` 是独立的原生 JS 页面，由 Axum 直接 serve。
@@ -269,9 +280,9 @@ screen_y = top  + round(y * height)
 | 三层锁 | `remote_enabled` / `control_locked` / `presenter_unlocked` | §13.2 |
 | 坐标校验 | 后端强制 `0≤x,y≤1`，越界拒绝 | §13.3 |
 | 信任边界 | 导播特权走 IPC，不上网；网络只暴露主持人面 | §13（强化） |
-| 单控制端 | `active_client_id` + `cid` 心跳强制独占：所有动作端点经 `is_controller` 门控，控制端离线（>4s 无心跳）才可被接管 | §13.4 |
+| 单控制端 | `active_client_id` + `cid` 心跳独占：控制动作经 `is_controller` 门控，控制端 >10s 无心跳才可被接管；消息接口只校验 token | §13.4 |
 | 审计日志 | 关键操作记时间/坐标/结果到 `log.rs` | §13.5 |
-| 断线保护 | 主持人端掉线即视为锁定、禁用按钮、遮罩提示 | §12.2 |
+| 断线保护 | 弱连接时仍允许操作；距上次成功心跳超过 LAN 8s / Relay 15s 后禁用按钮并提示断线，服务端 ARM 状态不因此自动清除 | §12.2 |
 
 ---
 
@@ -287,7 +298,7 @@ screen_y = top  + round(y * height)
 | 单控制端独占 | ✅ 已实现（`note_presence_and_claim`：先到为主、控制端离线可被接管） |
 | 截图传输 | ✅ 已实现（v0.1.16：变化驱动 + 单点编码 + MJPEG 推流；`snapshot.jpg` 保留兜底；§4.1） |
 | Relay 传输路径 | ✅ 已实现（v0.2.0：CLAB 中继 + HTTP 隧道 + 二进制 WS 推流；LAN 仍并存；§11） |
-| Relay session 宽限期回收 | 字段就位但后台清理任务未启用（已知 v1 限制；spec §13） |
+| Relay session 宽限期回收 | 已实现：每 10 秒检查，控制连接已断且超过宽限期（默认 60 秒）的会话被回收 |
 
 PowerPoint 控制走**独立的 COM 通道**（`ppt_com.rs` 经 `GetActiveObject` 连到运行中的实例，
 与被截窗口无关），不依赖前述 `input` 的窗口注入即可翻页/黑屏/运行宏；`input` 仅作 COM 失败时的回退。
@@ -324,6 +335,8 @@ LAN 直连之外，可经一台**校园网内中继服务器**（部署在 PKU C
 - **部署**：relay 是独立 Linux 二进制（`cargo build --release -p relay`），CLAB 上 systemd 跑，
   默认监听 `0.0.0.0:8080`。presenter 静态资源用 `include_str!` **编进 relay 二进制**——
   CLAB 不需要额外放前端文件；改 `src/presenter/*` 要同时重编**导播与 relay 两个二进制**。
+
+0.2.7 的内嵌手机页 POST 仅在 JSON body 中携带 token，而 Relay 入口从 query 校验 token，导致动作请求被中继以 401 拒绝；GET 页面、状态和画面不受该处不一致影响。当前使用限制见 [协议文档 §1.2](protocol.md#12-共通规则)，启动教程见 [README](../README.md#relay-简单教程)。
 
 ### 11.1 Cargo workspace 结构
 
