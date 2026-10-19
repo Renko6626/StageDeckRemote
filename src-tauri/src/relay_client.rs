@@ -36,13 +36,14 @@ pub enum RelayStatus {
 }
 
 pub struct RelayHandle {
-    pub control_join: tokio::task::JoinHandle<()>,
-    pub stream_join: tokio::task::JoinHandle<()>,
+    pub control_join: tauri::async_runtime::JoinHandle<()>,
+    pub stream_join: tauri::async_runtime::JoinHandle<()>,
 }
 
 pub fn spawn(state: Arc<AppState>, router: Arc<axum::Router>, cfg: RelayConfig) -> RelayHandle {
-    let control_join = tokio::spawn(control_loop(state.clone(), router.clone(), cfg.clone()));
-    let stream_join = tokio::spawn(stream_loop(state, cfg));
+    // setup 在同步线程调用此入口，必须显式使用 Tauri runtime。
+    let control_join = tauri::async_runtime::spawn(control_loop(state.clone(), router.clone(), cfg.clone()));
+    let stream_join = tauri::async_runtime::spawn(stream_loop(state, cfg));
     RelayHandle { control_join, stream_join }
 }
 
@@ -391,6 +392,36 @@ mod tests {
     fn test_state() -> Arc<AppState> {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         Arc::new(AppState::new("tok".into(), 0, tx))
+    }
+
+    #[test]
+    fn spawn_from_sync_setup_connects_both_channels() {
+        // Tauri setup 在同步线程上执行，不存在当前 Tokio runtime。
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let (addr, _) = tauri::async_runtime::block_on(mock_relay(true));
+        let state = test_state();
+        let cfg = RelayConfig {
+            base_url: format!("ws://{addr}"),
+            session_id: "SHOW-2026".into(),
+            secret: "secret".into(),
+        };
+        let handle = spawn(state.clone(), Arc::new(axum::Router::new()), cfg);
+        let connected = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let logs = log::recent(&state, 100);
+                    if logs.iter().any(|e| e.message == "Relay 控制通道已连接")
+                        && logs.iter().any(|e| e.message == "Relay 推流通道已连接")
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }).await
+        });
+        handle.control_join.abort();
+        handle.stream_join.abort();
+        assert!(connected.is_ok(), "Relay channels did not connect from synchronous setup");
     }
 
     /// mock relay:接受连接、完成 WS 握手、读 ClientHello、回 ServerHello ok,然后按 `silent` 决定是否沉默。

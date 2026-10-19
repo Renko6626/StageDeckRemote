@@ -3,6 +3,17 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.2.8] - 2026-10-20
+
+### Fixed
+
+- 修复启用 Relay 后重启客户端时的启动崩溃：同步初始化阶段通过 Tauri 运行时启动控制及推流任务。
+- 增加同步启动回归测试，验证两个 Relay 通道均能完成连接。
+
+### Known limitations
+
+- 尚未进行 Windows 安装及 PowerPoint 实机验收。
+
 ## [0.2.7] - 2026-10-18
 
 ### Relay 补充修复（2026-10-19）
