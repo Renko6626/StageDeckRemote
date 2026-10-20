@@ -7,7 +7,7 @@ import { storeToRefs } from "pinia";
 
 import { useAppState } from "../stores/appState";
 
-defineProps<{ size: "small" | "large" }>();
+defineProps<{ size: "small" | "large"; compact?: boolean }>();
 
 const app = useAppState();
 const { controlLocked } = storeToRefs(app);
@@ -25,7 +25,7 @@ async function toggle() {
 </script>
 
 <template>
-  <section class="card">
+  <section class="card" :class="{ compact }">
     <button
       :data-size="$props.size"
       :class="{ danger: controlLocked }"
@@ -38,6 +38,10 @@ async function toggle() {
 </template>
 
 <style scoped>
+.card.compact { padding: 0; border: 0; background: transparent; }
+.card.compact button { font-family: var(--sans); font-size: 12px; letter-spacing: normal; padding: 8px 14px; color: #edb4b4; border-color: #825151; background: #291819; }
+.card.compact button.danger { color: white; background: var(--danger); }
+
 button {
   width: 100%;
   font-family: var(--mono);

@@ -7,13 +7,13 @@
 
 ## 下载与快速使用
 
-当前版本为 **v0.2.7**，安装包、Linux Relay 和校验文件见 [GitHub Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.7)。
+当前版本为 **v0.2.9**，安装包、Linux Relay 和校验文件见 [GitHub Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.9)。
 
 局域网直连不需要启动 Relay：
 
 1. 在 Windows 导播电脑安装 StageDeck Remote，打开 PowerPoint 文稿并开始放映。
 2. 手机与导播电脑接入能互相访问的同一局域网。选择要捕获的 PPT 窗口，打开「远程控制」。
-3. 二维码面板选择 **LAN**，手机扫码，在手机端点「释放控制」后即可操作。
+3. 主持人连接卡片选择 **局域网**，手机扫码，在手机端点「释放控制」后即可操作。
 4. 使用宏按钮时，文稿自身的宏也需要能够在 PowerPoint 中运行。先确认电脑上能正常使用这些按钮。
 
 扫码地址通常形如 `http://192.168.50.10:8787/presenter?token=...`。页面打不开时，检查导播电脑防火墙和 Wi-Fi 客户端隔离；详细步骤见 [网络手册](docs/network.md)。
@@ -22,7 +22,7 @@
 
 Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播电脑和手机都必须能访问这台服务器的端口；使用校内服务器时，两端也需接入校园网或相应 VPN。
 
-**0.2.7 Relay 补充修复：** 初始 Relay 附件的手机 POST 缺少 URL token，会导致动作请求返回 401。当前源码已修复，下面使用带 `post-token-fix` 后缀的新附件。已有部署需替换 Relay、重启中继并刷新手机页面；Windows 0.2.7 安装包无需重装。鉴权规则见 [协议说明](docs/protocol.md#12-共通规则)。
+**已有 Relay 部署：** 本次改动在 Windows 导播端，已更新过的服务器无需再次替换。0.2.7 初始 Relay 附件存在手机 POST 缺少 URL token 的问题；仍使用初始附件的服务器应更新本版附件并重启。鉴权规则见 [协议说明](docs/protocol.md#12-共通规则)。
 
 ### 1. 下载并启动中继
 
@@ -31,7 +31,7 @@ Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播�
 ```bash
 mkdir -p stagedeck-relay
 cd stagedeck-relay
-curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.7/stagedeck-relay-linux-x86_64-0.2.7-post-token-fix -o relay
+curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.9/stagedeck-relay-linux-x86_64-0.1.1 -o relay
 chmod +x relay
 ./relay
 ```
@@ -48,17 +48,17 @@ curl -i 'http://127.0.0.1:8080/r/SANITY/api/status?token=anything'
 
 ### 2. 让导播端连接中继
 
-假设服务器地址为 `10.0.0.20`，在导播端设置的 **Relay** 区域填写：
+假设服务器地址为 `10.0.0.20`，在导播端 **Setup → 主持人连接 → 配置连接 → Relay 中继** 中填写：
 
 | 字段 | 示例与说明 |
 | --- | --- |
-| 地址（base_url） | `ws://10.0.0.20:8080`；替换为两端能访问的服务器地址，不能填写 `0.0.0.0` 或服务器的 `127.0.0.1` |
-| Session ID | `PROM-2026`；4–16 位大写字母、数字或连字符，不同活动使用不同 ID |
-| 预共享密钥（secret） | 自定的非空密钥，用于防止其他导播占用同一 Session ID |
+| 服务器地址 | `http://10.0.0.20:8080`；自动统一为 `ws://`，也可输入不带前缀的主机与端口；替换为两端能访问的服务器地址，不能填写 `0.0.0.0` 或服务器的 `127.0.0.1` |
+| 会话编号 | `PROM-2026`；4–16 位大写字母、数字或连字符，每台导播使用不同编号，重复编号与密钥会相互接管 |
+| 连接密钥 | 自定的非空密钥，用于防止其他导播占用同一 Session ID |
 
-点「保存」后**重启导播应用**，等待 Relay 状态变为 `connected`。保存设置不会立即切换当前连接；关闭 Relay 也需要重启导播才能生效。
+点「保存」后**重启导播应用**，等待主持人连接区域显示“Relay 已连接”。保存设置不会立即切换当前连接；关闭 Relay 也需要重启导播才能生效。
 
-二维码面板选择 **Relay** 后，手机扫码进入形如 `http://10.0.0.20:8080/r/PROM-2026/presenter?token=...` 的地址。地址中的 token 由软件生成，与上面的 secret 不同。当前客户端仅支持 `ws://`，不支持 `wss://`。
+二维码面板选择 **Relay** 后，手机扫码进入形如 `http://10.0.0.20:8080/r/PROM-2026/presenter?token=...` 的地址。地址中的 token 由软件生成，与上面的 secret 不同。地址输入中的 HTTP、HTTPS、WS、WSS 前缀均转换为 `ws://`；实际连接仍使用普通 WebSocket，未增加 TLS 支持。
 
 ### 3. 自定义端口和长期运行
 

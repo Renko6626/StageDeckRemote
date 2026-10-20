@@ -46,23 +46,22 @@ async function pick(w: TargetWindow) {
 
 <template>
   <section class="card">
-    <h2>PPT 窗口</h2>
+    <h2>演示窗口</h2>
 
     <div class="current">
       <template v-if="selectedWindow">
         <div class="title">{{ selectedWindow.title }}</div>
-        <div class="meta">
-          {{ selectedWindow.width }}×{{ selectedWindow.height }} @ ({{ selectedWindow.left }},
-          {{ selectedWindow.top }})
-        </div>
+        <details class="meta"><summary>窗口信息</summary>
+          {{ selectedWindow.width }}×{{ selectedWindow.height }} @ ({{ selectedWindow.left }}, {{ selectedWindow.top }})
+        </details>
       </template>
       <div v-else class="meta">未选择窗口</div>
     </div>
 
     <div class="actions">
-      <button @click="autoDetect">自动识别 PowerPoint</button>
+      <button @click="autoDetect">自动识别</button>
       <button @click="refreshList" :disabled="loading">
-        {{ loading ? "刷新中…" : "枚举窗口" }}
+        {{ loading ? "刷新中…" : "更换窗口" }}
       </button>
     </div>
 
@@ -73,13 +72,14 @@ async function pick(w: TargetWindow) {
         <button class="win" @click="pick(w)">{{ w.title }}</button>
       </li>
     </ul>
-    <p v-else-if="!loading" class="hint">
-      （Windows 下点击"枚举窗口"会列出可选窗口；当前平台为占位空列表）
-    </p>
+
   </section>
 </template>
 
 <style scoped>
+.card h2 { margin-bottom: 10px; font-family: var(--sans); font-size: 13px; font-weight: 600; letter-spacing: normal; }
+.current summary { cursor: pointer; font-family: var(--sans); letter-spacing: normal; }
+
 .current {
   margin-bottom: 12px;
   padding: 8px 0;
@@ -140,12 +140,6 @@ async function pick(w: TargetWindow) {
   letter-spacing: 0.04em;
   padding: 8px 10px;
 }
-
-.hint {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink-faint);
-  letter-spacing: 0.06em;
-  margin: 8px 0 0;
-}
+.current { padding: 0 0 8px; margin-bottom: 8px; }
+.actions button { flex: 1; font-family: var(--sans); font-size: 11px; letter-spacing: normal; }
 </style>

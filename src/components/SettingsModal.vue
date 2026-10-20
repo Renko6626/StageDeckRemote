@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 导播设置模态:重置访问码 / 服务端口(重启生效)/ Relay 配置 / 提示音开关。
-import { ref, onMounted } from "vue";
+// 通用设置：重置访问码、服务端口（重启生效）、提示音。
+import { ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useAppState } from "../stores/appState";
@@ -15,11 +15,6 @@ const chimeOn = ref(localStorage.getItem("sd.dir.toastChime") !== "off");
 const portInput = ref<number>(serverPort.value || 8787);
 const confirmReset = ref(false);
 const note = ref("");
-
-// Relay 表单字段
-const relayBase = ref("");
-const relaySid = ref("");
-const relaySecret = ref("");
 
 function flash(t: string) {
   note.value = t;
@@ -58,57 +53,13 @@ async function savePort() {
   }
 }
 
-// 打开模态时加载 relay 配置
-onMounted(async () => {
-  try {
-    await app.loadRelay();
-    if (app.relayConfig) {
-      relayBase.value = app.relayConfig.base_url;
-      relaySid.value = app.relayConfig.session_id;
-      relaySecret.value = app.relayConfig.secret;
-    }
-  } catch (error) {
-    flash(`无法读取 Relay 配置：${String(error)}`);
-  }
-});
-
-async function saveRelay() {
-  relayBase.value = relayBase.value.trim();
-  relaySid.value = relaySid.value.trim();
-  if (!/^[A-Z0-9-]{4,16}$/.test(relaySid.value)) {
-    flash("Session ID 必须匹配 [A-Z0-9-]{4,16}");
-    return;
-  }
-  try {
-    await app.saveRelay({
-      base_url: relayBase.value,
-      session_id: relaySid.value,
-      secret: relaySecret.value,
-    });
-    flash("Relay 配置已保存 — 重启导播生效");
-  } catch (error) {
-    flash(String(error));
-  }
-}
-
-async function clearRelay() {
-  try {
-    await app.saveRelay(null);
-    relayBase.value = "";
-    relaySid.value = "";
-    relaySecret.value = "";
-    flash("已保存关闭设置，重启导播后停止 Relay 连接");
-  } catch {
-    flash("操作失败 — 请重试");
-  }
-}
 </script>
 
 <template>
   <div class="overlay" @click.self="emit('close')">
     <section class="modal">
       <header class="mhead">
-        <span>设置 · SETTINGS</span>
+        <span>通用设置</span>
         <button class="x" @click="emit('close')">✕</button>
       </header>
 
@@ -134,29 +85,6 @@ async function clearRelay() {
         <button class="chime" :class="{ on: chimeOn }" @click="toggleChime">
           收到主持人消息提示音：{{ chimeOn ? "开" : "关" }}
         </button>
-      </div>
-
-      <div class="grp">
-        <div class="glabel">Relay</div>
-        <p class="desc">
-          <span class="relay-status" :class="'rs-' + app.relayStatus.split(':')[0]">●</span>
-          {{ app.relayStatus }}
-
-        </p>
-        <p class="desc">下面是已保存配置。修改后重启生效，当前连接和二维码继续使用启动时配置。</p>
-        <div class="prow">
-          <input v-model="relayBase" placeholder="ws://stagedeck.example.com:8080" />
-        </div>
-        <div class="prow">
-          <input v-model="relaySid" placeholder="Session ID（如 PROM-2026）" />
-        </div>
-        <div class="prow">
-          <input v-model="relaySecret" placeholder="预共享密钥" type="password" />
-        </div>
-        <div class="prow relay-btns">
-          <button @click="saveRelay">保存</button>
-          <button @click="clearRelay" class="danger relay-clear">关闭 Relay</button>
-        </div>
       </div>
 
       <p v-if="note" class="note">{{ note }}</p>
@@ -277,22 +205,5 @@ async function clearRelay() {
   font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink);
-}
-.relay-status {
-  font-size: 10px;
-  margin-right: 4px;
-}
-.rs-disabled { color: var(--ink-faint); }
-.rs-connecting { color: #f0a030; }
-.rs-connected { color: #40c870; }
-.rs-error { color: var(--danger); }
-.relay-btns {
-  margin-top: 4px;
-}
-.relay-clear {
-  flex: 0 0 auto;
-  width: auto;
-  padding: 8px 12px;
-  font-size: 10px;
 }
 </style>

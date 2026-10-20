@@ -5,6 +5,7 @@
 // 设计来源:docs/superpowers/specs/2026-06-27-director-gui-setup-live-split-design.md
 import { onMounted, onUnmounted, ref } from "vue";
 
+import { useNetworkState } from "../stores/networkState";
 import { useAppState } from "../stores/appState";
 import StatusBar from "../components/StatusBar.vue";
 import EmergencyLock from "../components/EmergencyLock.vue";
@@ -19,6 +20,7 @@ import DirectorMessages from "../components/DirectorMessages.vue";
 type DirectorMode = "setup" | "live";
 
 const app = useAppState();
+const net = useNetworkState();
 // 注意: Vue 3 <script setup> 下这些是 per-instance 变量(每个组件实例独立),
 // 不要随便挪进 composable —— 共享 state 会让两个 DirectorView 实例相互覆盖。
 let timer: number | undefined;
@@ -30,10 +32,10 @@ const mode = ref<DirectorMode>("setup");
 // ── 可拖拽分栏 ──
 const RAIL_MIN = 300;
 const RAIL_MAX = 600;
-const RAIL_DEFAULT = 380;
+const RAIL_DEFAULT = 330;
 const LOG_MIN = 160;
 const LOG_MAX = 800;
-const LOG_DEFAULT = 300;
+const LOG_DEFAULT = 180;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
@@ -73,7 +75,8 @@ function startLog(e: PointerEvent) {
   const startY = e.clientY;
   const startH = logHeight.value;
   const mainH = h.parentElement ? h.parentElement.clientHeight : 0;
-  const upper = mainH > 0 ? Math.min(LOG_MAX, mainH - 200) : LOG_MAX;
+  const toolbarH = h.parentElement?.querySelector(".local-controls")?.clientHeight ?? 0;
+  const upper = mainH > 0 ? Math.max(LOG_MIN, Math.min(LOG_MAX, mainH - toolbarH - 212)) : LOG_MAX;
   const move = (ev: PointerEvent) => {
     logHeight.value = clamp(startH + (startY - ev.clientY), LOG_MIN, upper);
   };
@@ -129,16 +132,15 @@ onUnmounted(() => {
       >
         Live
       </button>
+      <span class="service-status" :class="{ offline: !net.online }">{{ net.online ? "服务运行中" : "服务未连接" }}</span>
     </header>
 
-    <aside class="rail">
+    <aside class="rail" :class="{ 'setup-rail': mode === 'setup' }">
       <!-- Setup 模式 rail -->
       <template v-if="mode === 'setup'">
-        <StatusBar mode="setup" />
         <WindowPicker />
         <QrCodePanel />
-        <LocalNav />
-        <EmergencyLock size="small" />
+        <StatusBar mode="setup" />
       </template>
 
       <!-- Live 模式 rail -->
@@ -155,6 +157,10 @@ onUnmounted(() => {
 
     <main class="main">
       <DirectorPreview class="pane-preview" />
+      <div v-if="mode === 'setup'" class="local-controls">
+        <LocalNav compact />
+        <EmergencyLock size="small" compact />
+      </div>
       <div class="hsplit" @pointerdown="startLog" title="拖动调整预览/日志比例"></div>
       <LogPanel class="pane-log" />
     </main>
@@ -162,6 +168,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.setup-rail > :deep(.card) { padding-top: 12px; padding-bottom: 12px; }
+.service-status { margin-left: auto; font-size: 11px; color: var(--ink-dim); }
+.service-status.offline { color: #f19a9a; }
+.local-controls { flex-shrink: 0; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); background: var(--panel); margin-top: 10px; }
+.local-controls > :first-child { flex: 1; }
+
 .dashboard {
   display: grid;
   grid-template-areas:
@@ -171,7 +183,7 @@ onUnmounted(() => {
   grid-template-rows: 36px 1fr;
   gap: 0;
   padding: 16px;
-  height: calc(100vh - 38px);
+  height: calc(100dvh - 60px);
   overflow: hidden;
 }
 
@@ -179,7 +191,7 @@ onUnmounted(() => {
   grid-area: mode;
   display: flex;
   gap: 4px;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   border-bottom: 1px solid var(--line);
   padding-bottom: 8px;
@@ -209,7 +221,7 @@ onUnmounted(() => {
   grid-area: rail;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 0;
   overflow-y: auto;
 }
@@ -273,6 +285,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 980px) {
+  .local-controls { flex-wrap: wrap; }
+
   .dashboard {
     grid-template-areas:
       "mode"

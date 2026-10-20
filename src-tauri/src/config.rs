@@ -32,11 +32,20 @@ pub struct RelayConfigPersist {
 
 impl RelayConfigPersist {
     pub fn validated(mut self) -> Result<Self, String> {
-        let url = tauri::Url::parse(self.base_url.trim())
-            .map_err(|_| "Relay 地址无效，请填写 ws://主机:端口".to_string())?;
-        // 当前 WS 客户端未启用 TLS；不要让不支持的地址保存后无限重连。
-        if url.scheme() != "ws" || url.host_str().is_none() {
-            return Err("当前 Relay 支持 ws://主机:端口地址".into());
+        // 先换前缀再解析，保留输入中的显式端口（包括 HTTPS 的 :443）。
+        let raw = self.base_url.trim();
+        let authority = if let Some((scheme, rest)) = raw.split_once("://") {
+            if !["http", "https", "ws", "wss"].contains(&scheme.to_ascii_lowercase().as_str()) {
+                return Err("请填写 HTTP、HTTPS、WS 地址或主机与端口".into());
+            }
+            rest
+        } else {
+            raw
+        };
+        let url = tauri::Url::parse(&format!("ws://{authority}"))
+            .map_err(|_| "Relay 地址无效，请填写主机和端口".to_string())?;
+        if url.host_str().is_none() {
+            return Err("Relay 地址缺少主机".into());
         }
         if url.path() != "/" || url.query().is_some() || url.fragment().is_some()
             || !url.username().is_empty() || url.password().is_some()
@@ -109,7 +118,16 @@ mod tests {
     #[test]
     fn relay_address_is_normalized_and_invalid_settings_are_rejected() {
         assert_eq!(relay(" ws://localhost:8080/ ").validated().unwrap().base_url, "ws://localhost:8080");
-        for url in ["http://localhost:8080", "wss://localhost:8080", "ws://localhost:8080/path", "ws://localhost:8080/?x=1"] {
+        for (input, expected) in [
+            ("http://localhost:8080/", "ws://localhost:8080"),
+            ("https://localhost:443", "ws://localhost:443"),
+            ("wss://localhost:443/", "ws://localhost:443"),
+            ("localhost:8080", "ws://localhost:8080"),
+            ("HTTP://localhost:80", "ws://localhost"),
+        ] {
+            assert_eq!(relay(input).validated().unwrap().base_url, expected);
+        }
+        for url in ["ftp://localhost:8080", "ws://localhost:8080/path", "ws://localhost:8080/?x=1", "http://user:pass@localhost:8080", ""] {
             assert!(relay(url).validated().is_err(), "{url}");
         }
         let mut cfg = relay("ws://localhost:8080");
@@ -127,7 +145,7 @@ mod tests {
         let disk = Config::load(&path);
         assert_eq!(disk.server_port, 4321);
         assert_eq!(disk.relay.unwrap().base_url, "ws://new:8080");
-        assert!(Config::save_relay(&path, Some(relay("http://invalid"))).is_err());
+        assert!(Config::save_relay(&path, Some(relay("http://invalid/presenter"))).is_err());
         assert_eq!(Config::load(&path).relay.unwrap().base_url, "ws://new:8080");
         // 无法替换目录时应返回错误，并清理未完成文件。
         assert!(runtime.save(&dir).is_err());

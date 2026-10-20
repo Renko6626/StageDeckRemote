@@ -58,8 +58,10 @@ async function toggleRemote() {
 </script>
 
 <template>
-  <section class="card">
-    <h2>控制状态</h2>
+  <section class="card" :class="{ compact: $props.mode === 'setup' }">
+    <h2>{{ $props.mode === "setup" ? "远程控制" : "控制状态" }}</h2>
+    <component :is="$props.mode === 'setup' ? 'details' : 'div'">
+      <summary v-if="$props.mode === 'setup'">控制详情</summary>
     <ul class="status">
       <li>
         <span class="k">服务</span>
@@ -102,6 +104,17 @@ async function toggleRemote() {
     </ul>
 
     <button
+      data-test="release"
+      class="release"
+      :disabled="!activeClientId"
+      @click="app.releaseController()"
+    >
+      释放控制权
+    </button>
+
+    </component>
+
+    <button
       data-test="remote-toggle"
       :data-mode="$props.mode"
       :class="{ on: remoteEnabled }"
@@ -111,20 +124,22 @@ async function toggleRemote() {
       远程控制:{{ remoteEnabled ? "已开启" : "已关闭" }}
     </button>
 
-    <button
-      data-test="release"
-      class="release"
-      :disabled="!activeClientId"
-      @click="app.releaseController()"
-    >
-      释放控制权
-    </button>
-
+    <p v-if="$props.mode === 'setup'" class="control-hint">开启后，主持人仍需在手机上解锁操作。</p>
     <p v-if="lastError" class="error">{{ lastError }}</p>
   </section>
 </template>
 
 <style scoped>
+.compact { display: flex; flex-direction: column; }
+.compact h2 { order: 0; margin-bottom: 8px; font-family: var(--sans); font-size: 13px; font-weight: 600; letter-spacing: normal; }
+.compact .remote { order: 1; margin-bottom: 0; font-family: var(--sans); font-size: 12px; letter-spacing: normal; }
+.control-hint { order: 2; margin: 9px 0 0; color: var(--ink-dim); font-size: 11px; line-height: 1.6; }
+.compact details { order: 3; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.compact summary { cursor: pointer; color: var(--ink-dim); font-size: 11px; }
+.compact .error { order: 4; }
+.compact .status { margin-top: 8px; }
+.compact .status li { padding: 5px 0; }
+
 .status {
   list-style: none;
   margin: 0 0 10px;
@@ -175,7 +190,7 @@ async function toggleRemote() {
   margin-bottom: 8px;
 }
 .remote[data-mode="setup"] {
-  padding: 11px 12px;
+  padding: 9px 12px;
   font-size: 11px;
 }
 .remote[data-mode="live"] {

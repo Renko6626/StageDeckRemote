@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 应用外壳：标题栏 + 齿轮设置 + 路由出口。
+// 应用外壳：标题栏 + 设置入口 + 路由出口。
 import { ref } from "vue";
 
 import SettingsModal from "./components/SettingsModal.vue";
@@ -12,7 +12,10 @@ const settingsOpen = ref(false);
   <div v-else class="app">
     <header class="topbar">
       <strong class="brand">STAGEDECK<span class="brand-sub">&nbsp;·&nbsp;DIRECTOR</span></strong>
-      <button class="gear" @click="settingsOpen = true" title="设置" aria-label="设置">⚙</button>
+      <button class="settings-button" @click="settingsOpen = true" title="打开通用设置" aria-label="通用设置">
+        <span class="settings-icon" aria-hidden="true">⚙</span>
+        <span>通用设置</span>
+      </button>
     </header>
     <router-view />
     <SettingsModal v-if="settingsOpen" @close="settingsOpen = false" />
@@ -69,6 +72,7 @@ body::before {
 }
 
 .topbar {
+  height: 60px;
   display: flex;
   align-items: center;
   padding: 10px 18px;
@@ -90,12 +94,30 @@ body::before {
   font-weight: 400;
 }
 
-.topbar .gear {
+.topbar .settings-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-left: auto;
+  min-height: 40px;
+  padding: 8px 16px;
   font-size: 14px;
+  font-weight: 600;
   line-height: 1;
-  padding: 5px 10px;
-  color: var(--ink-dim);
+  letter-spacing: normal;
+  color: var(--ink);
+  background: var(--panel-2);
+  border-color: var(--ink-faint);
+}
+
+.topbar .settings-icon {
+  font-size: 19px;
+}
+
+.topbar .settings-button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
 }
 
 .card {
