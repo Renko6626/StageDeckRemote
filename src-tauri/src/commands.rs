@@ -136,20 +136,33 @@ pub fn force_lock(state: State<Arc<AppState>>, locked: bool) {
 #[tauri::command]
 pub fn local_next(state: State<Arc<AppState>>) -> Result<(), String> {
     activate_selected(&state);
-    input::key_next().map_err(|e| e.to_string())
+    log::diagnostic(&state, "info", "input", "导播 SendInput Right begin");
+    let result = input::key_next().map_err(|e| e.to_string());
+    log::event(&state, match &result {
+        Ok(()) => "导播下一页按键已发送".into(),
+        Err(e) => format!("导播下一页发送失败：{e}"),
+    });
+    result
 }
 
 #[tauri::command]
 pub fn local_prev(state: State<Arc<AppState>>) -> Result<(), String> {
     activate_selected(&state);
-    input::key_prev().map_err(|e| e.to_string())
+    log::diagnostic(&state, "info", "input", "导播 SendInput Left begin");
+    let result = input::key_prev().map_err(|e| e.to_string());
+    log::event(&state, match &result {
+        Ok(()) => "导播上一页按键已发送".into(),
+        Err(e) => format!("导播上一页发送失败：{e}"),
+    });
+    result
 }
 
 /// 翻页前激活选中窗口（本地兜底翻页同样需要焦点）。
 fn activate_selected(state: &AppState) {
-    let i = state.lock();
-    if let Some(w) = i.selected_window.as_ref() {
-        window_manager::bring_to_front(w.handle);
+    let handle = state.lock().selected_window.as_ref().map(|w| w.handle);
+    if let Some(handle) = handle {
+        let accepted = window_manager::bring_to_front(handle);
+        log::diagnostic(state, if accepted { "debug" } else { "warn" }, "input", format!("window={handle} activate accepted={accepted}"));
     }
 }
 
@@ -157,6 +170,25 @@ fn activate_selected(state: &AppState) {
 pub fn get_logs(state: State<Arc<AppState>>) -> Vec<LogEntry> {
     let app: &AppState = &state;
     log::recent(app, 100)
+}
+
+#[tauri::command]
+pub fn get_diagnostics_status(state: State<Arc<AppState>>) -> crate::diagnostics::Status {
+    state.diagnostics.status()
+}
+
+#[tauri::command]
+pub fn set_detailed_diagnostics(state: State<Arc<AppState>>, enabled: bool) -> crate::diagnostics::Status {
+    state.diagnostics.set_enabled(enabled);
+    log::event(&state, if enabled { "详细诊断已开启（本次运行）" } else { "详细诊断已关闭" });
+    state.diagnostics.status()
+}
+
+#[tauri::command]
+pub fn open_logs_directory(app: tauri::AppHandle, state: State<Arc<AppState>>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let directory = state.diagnostics.status().directory.ok_or("日志目录不可用")?;
+    app.opener().open_path(directory, None::<&str>).map_err(|e| format!("无法打开日志目录：{e}"))
 }
 
 /// 列出当前演示文稿的 VBA 宏名（导播专用，VBA spike）。

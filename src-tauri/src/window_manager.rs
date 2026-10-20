@@ -182,9 +182,9 @@ mod imp {
         to_target(isize_to_hwnd(handle))
     }
 
-    pub fn bring_to_front(handle: isize) {
+    pub fn bring_to_front(handle: isize) -> bool {
         unsafe {
-            let _ = SetForegroundWindow(isize_to_hwnd(handle));
+            SetForegroundWindow(isize_to_hwnd(handle)).as_bool()
         }
     }
 }
@@ -205,7 +205,7 @@ mod imp {
         None
     }
 
-    pub fn bring_to_front(_handle: isize) {}
+    pub fn bring_to_front(_handle: isize) -> bool { false }
 }
 
 pub use imp::{bring_to_front, find_powerpoint, list_windows, window_rect};

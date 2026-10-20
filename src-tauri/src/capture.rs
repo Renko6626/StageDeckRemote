@@ -93,6 +93,7 @@ pub struct CapturedFrame {
 /// 管理捕获源（WGC 主 / BitBlt 兜底）、最新原始帧缓冲、帧 broker 与编码线程。
 /// 存于 AppState，被 snapshot 读、被选窗启停；编码线程把变化帧 publish 到 broker。
 pub struct CaptureManager {
+    diagnostics: Arc<crate::diagnostics::Diagnostics>,
     /// 捕获源写入的最新一帧（原始 BGRA）；snapshot 与编码线程读取。
     latest: Arc<Mutex<Option<CapturedFrame>>>,
     /// 一处编码、watch 扇出最新编码帧；主持人 MJPEG / 导播 Channel 各自订阅。
@@ -107,7 +108,12 @@ pub struct CaptureManager {
 
 impl CaptureManager {
     pub fn new() -> Self {
+        Self::with_diagnostics(Arc::new(crate::diagnostics::Diagnostics::default()))
+    }
+
+    pub fn with_diagnostics(diagnostics: Arc<crate::diagnostics::Diagnostics>) -> Self {
         Self {
+            diagnostics,
             latest: Arc::new(Mutex::new(None)),
             broker: Arc::new(FrameBroker::new()),
             #[cfg(windows)]
@@ -136,6 +142,7 @@ impl CaptureManager {
     /// WGC 成功 → 起 signal 驱动编码线程；失败 → 起 BitBlt 兜底定时线程。两者都喂同一 broker。
     pub fn start(&self, hwnd: isize) {
         self.stop();
+        self.diagnostics.write("info", "capture", &format!("capture start hwnd={hwnd}"));
         if let Ok(mut g) = self.latest.lock() {
             *g = None;
         }
@@ -147,18 +154,23 @@ impl CaptureManager {
             // sig_tx 整体移交给 WGC handler 持有（不留本端副本）：这样 handler 是唯一 sender，
             // 无论 stop() 关 WGC、还是 WGC 自行终止（捕获窗口关闭/帧错误），handler 一 drop sig_rx 即关闭,
             // 编码线程的 `for _ in sig_rx` 随之结束、线程自退,不会滞留。
-            match crate::capture_session::start(hwnd, self.latest.clone(), sig_tx) {
+            self.diagnostics.write("info", "capture", "WGC start begin");
+            match crate::capture_session::start(hwnd, self.latest.clone(), sig_tx, self.diagnostics.clone()) {
                 Ok(ctrl) => {
+                    self.diagnostics.write("info", "capture", "WGC started");
                     if let Ok(mut c) = self.control.lock() {
                         *c = Some(ctrl);
                     }
                     let latest = self.latest.clone();
                     let broker = self.broker.clone();
+                    let diagnostics = self.diagnostics.clone();
                     let handle = std::thread::spawn(move || {
                         let mut last_hash = 0u64;
+                        let mut encoding_failed = false;
                         for _ in sig_rx {
-                            encode_changed(&latest, &broker, &mut last_hash);
+                            encode_changed(&latest, &broker, &mut last_hash, &diagnostics, &mut encoding_failed);
                         }
+                        diagnostics.write("info", "capture", "WGC encoder stopped");
                     });
                     if let Ok(mut e) = self.encoder.lock() {
                         *e = Some(handle);
@@ -166,6 +178,7 @@ impl CaptureManager {
                 }
                 // 失败（旧系统/WGC 不可用）→ BitBlt 定时兜底，仍喂同一 broker。
                 Err(e) => {
+                    self.diagnostics.write("warn", "capture", &format!("WGC start failed; falling back to BitBlt: {e}"));
                     eprintln!("[stagedeck] WGC 启动失败，回退 BitBlt 定时抓取：{e}");
                     self.start_bitblt_fallback(hwnd);
                 }
@@ -182,8 +195,12 @@ impl CaptureManager {
     fn start_bitblt_fallback(&self, hwnd: isize) {
         let broker = self.broker.clone();
         let stop = self.stop_flag.clone();
+        let diagnostics = self.diagnostics.clone();
+        diagnostics.write("info", "capture", "BitBlt fallback started");
         let handle = std::thread::spawn(move || {
             let mut last_hash = 0u64;
+            let mut capture_failed = false;
+            let mut encoding_failed = false;
             let win = crate::app_state::TargetWindow {
                 title: String::new(),
                 left: 0,
@@ -193,17 +210,42 @@ impl CaptureManager {
                 handle: hwnd,
             };
             while !stop.load(Ordering::SeqCst) {
-                if let Ok(frame) = capture_window_raw(&win) {
-                    let h = sample_hash(&frame.bgra);
-                    if h != last_hash {
-                        last_hash = h;
-                        if let Ok(jpeg) = encode_captured_frame(&frame, 1280, 720, 82) {
-                            broker.publish(jpeg, frame.width, frame.height);
+                match capture_window_raw(&win) {
+                    Ok(frame) => {
+                        if capture_failed {
+                            diagnostics.write("info", "capture", "BitBlt capture recovered");
+                            capture_failed = false;
+                        }
+                        let h = sample_hash(&frame.bgra);
+                        if h != last_hash {
+                            last_hash = h;
+                            match encode_captured_frame(&frame, 1280, 720, 82) {
+                                Ok(jpeg) => {
+                                    if encoding_failed {
+                                        diagnostics.write("info", "capture", "BitBlt JPEG encoding recovered");
+                                        encoding_failed = false;
+                                    }
+                                    broker.publish(jpeg, frame.width, frame.height);
+                                }
+                                Err(e) => {
+                                    if !encoding_failed {
+                                        diagnostics.write("error", "capture", &format!("BitBlt JPEG encoding failed: {e}"));
+                                        encoding_failed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if !capture_failed {
+                            diagnostics.write("error", "capture", &format!("BitBlt capture failed: {e}"));
+                            capture_failed = true;
                         }
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
+            diagnostics.write("info", "capture", "BitBlt fallback stopped");
         });
         if let Ok(mut e) = self.encoder.lock() {
             *e = Some(handle);
@@ -212,19 +254,31 @@ impl CaptureManager {
 
     /// 停止当前会话：停 BitBlt 循环 + 关 WGC（handler 持有的唯一 sender drop → sig_rx 关闭 → 编码线程退出）+ join。
     pub fn stop(&self) {
+        self.diagnostics.write("debug", "capture", "capture stop requested");
+        let mut stopped = false;
         self.stop_flag.store(true, Ordering::SeqCst);
         #[cfg(windows)]
         {
             if let Ok(mut c) = self.control.lock() {
                 if let Some(ctrl) = c.take() {
-                    let _ = ctrl.stop(); // 关 WGC → handler drop → 其 sender drop → sig_rx 关闭
+                    stopped = true;
+                    // 关 WGC → handler drop → 其 sender drop → sig_rx 关闭
+                    if let Err(e) = ctrl.stop() {
+                        self.diagnostics.write("error", "capture", &format!("WGC stop failed: {e}"));
+                    }
                 }
             }
         }
         if let Ok(mut e) = self.encoder.lock() {
             if let Some(h) = e.take() {
-                let _ = h.join();
+                stopped = true;
+                if h.join().is_err() {
+                    self.diagnostics.write("error", "capture", "capture encoder thread panicked");
+                }
             }
+        }
+        if stopped {
+            self.diagnostics.write("info", "capture", "capture stopped");
         }
     }
 }
@@ -253,11 +307,19 @@ fn encode_changed(
     latest: &Arc<Mutex<Option<CapturedFrame>>>,
     broker: &Arc<FrameBroker>,
     last_hash: &mut u64,
+    diagnostics: &crate::diagnostics::Diagnostics,
+    encoding_failed: &mut bool,
 ) {
     let changed = {
         let g = match latest.lock() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(_) => {
+                if !*encoding_failed {
+                    diagnostics.write("error", "capture", "WGC frame buffer lock failed");
+                    *encoding_failed = true;
+                }
+                return;
+            }
         };
         match &*g {
             Some(f) => {
@@ -273,8 +335,20 @@ fn encode_changed(
         }
     };
     if let Some(f) = changed {
-        if let Ok(jpeg) = encode_captured_frame(&f, 1280, 720, 82) {
-            broker.publish(jpeg, f.width, f.height);
+        match encode_captured_frame(&f, 1280, 720, 82) {
+            Ok(jpeg) => {
+                if *encoding_failed {
+                    diagnostics.write("info", "capture", "WGC JPEG encoding recovered");
+                    *encoding_failed = false;
+                }
+                broker.publish(jpeg, f.width, f.height);
+            }
+            Err(e) => {
+                if !*encoding_failed {
+                    diagnostics.write("error", "capture", &format!("WGC JPEG encoding failed: {e}"));
+                    *encoding_failed = true;
+                }
+            }
         }
     }
 }

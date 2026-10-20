@@ -156,8 +156,8 @@ sequenceDiagram
 
 ### 4.3 翻页 / 锁定
 
-- `POST /api/next|/prev` → 要求 `click_allowed`（三层全通，含主持人 ARM）→ `ppt_com::nav_next/prev`，
-  COM 失败回退 `input::key_next/prev`。
+- `POST /api/next|/prev` → 要求 `click_allowed`（三层全通，含主持人 ARM）→ 激活选中窗口，
+  直接调用 `input::key_next/prev`，与导播本地翻页一致，不等待 COM 通道。
 - `POST /api/black|/restore` → 同样要求 `click_allowed` → `ppt_com::set_black(true/false)`。
 - `POST /api/action` → 要求 `click_allowed` → `ppt_com::trigger_action(shape)`（运行宏）。
 - `POST /api/unlock` → 仅当 `button_allowed`（远程开且未紧急锁）时置 `presenter_unlocked=true`，
@@ -179,6 +179,12 @@ sequenceDiagram
 COM 调用在线程池中执行，许可由工作线程持有。状态读取超过 2 秒、操作执行超过 8 秒时，等待方返回忙碌或超时结果，后台调用仍持有许可直到实际结束，避免超时后重叠执行。宏只在明确的参数数量错误时回退无参调用，不自动重跑运行时异常。
 
 手机发送操作期间暂停新的 `slide_state` 探测，状态心跳继续。`409 op_in_flight` 表示同一 `op_id` 仍在执行，与本次宏未执行的 `409 ppt_busy` 分开提示。具体响应见 [协议文档](protocol.md#210-post-apiaction)。
+
+忙碌状态继续通过现有轮询更新，不使用 SSE。手机仅禁用依赖 COM 的宏、黑屏和恢复；屏幕点击和基础翻页仍可使用，继续遵守三层锁、控制权及操作期间的禁用规则。忙碌只表示通道占用或读取超时，不能据此断定 PowerPoint 有弹窗。
+
+### 4.6 本地诊断日志
+
+`diagnostics.rs` 管理共享的本地 JSONL 文件、大小轮换和详细模式；`log.rs` 保留内存事件，并将常规事件同步写入文件。诊断文件不通过网络开放读取，导播通过 IPC 查询状态、切换详细模式并打开目录。手机只可通过 token 认证的 `/api/diagnostics` 上报错误，Relay 复用普通请求隧道。COM 调用使用作用域线程上下文关联步骤，捕获模块共享文件出口，不记录图像。使用方法和保留策略见 [诊断说明](diagnostics.md)。
 
 ---
 
@@ -245,7 +251,7 @@ screen_y = top  + round(y * height)
 | `capture_session.rs` | WGC 后台捕获会话（写原始 BGRA 缓冲 + 通知编码线程） | `#[cfg(windows)]` |
 | `frame_broker.rs` | `watch` 扇出已编码帧；`sample_hash` 变化检测；`mjpeg_part` 公共分帧 | 共享 |
 | `input.rs` | SendInput 模拟鼠标/键盘 | `#[cfg(windows)]` |
-| `ppt_com.rs` | PowerPoint COM 控制：翻页 / 黑屏-恢复 / 取放映态 / 运行宏 | `#[cfg(windows)]` |
+| `ppt_com.rs` | PowerPoint COM 控制：黑屏-恢复 / 取放映态 / 运行宏 | `#[cfg(windows)]` |
 | `macro_execution.rs` | 宏参数数量错误的无参回退策略，运行时异常不重试 | 共享 |
 | `op_cache.rs` | 按 `op_id` 保存执行中与已完成结果，处理手机重复请求 | 共享 |
 | `relay_client.rs` | Relay 模式下的 WS 控制隧道 + WS 推流 + 重连 + token push（§11） | 共享 |
@@ -301,7 +307,7 @@ screen_y = top  + round(y * height)
 | Relay session 宽限期回收 | 已实现：每 10 秒检查，控制连接已断且超过宽限期（默认 60 秒）的会话被回收 |
 
 PowerPoint 控制走**独立的 COM 通道**（`ppt_com.rs` 经 `GetActiveObject` 连到运行中的实例，
-与被截窗口无关），不依赖前述 `input` 的窗口注入即可翻页/黑屏/运行宏；`input` 仅作 COM 失败时的回退。
+与被截窗口无关），用于黑屏和运行宏；基础翻页直接使用 `input` 模拟按键，避免被 COM 状态读取阻塞。
 
 ---
 

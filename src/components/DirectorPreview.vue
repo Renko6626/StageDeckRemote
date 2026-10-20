@@ -57,7 +57,7 @@ onUnmounted(() => {
     <header class="pv-head">
       <span class="stat">
         <span class="dot" :class="{ on: slide?.available }"></span>
-        POWERPOINT <b>{{ slide?.busy ? "忙碌 · 请检查 PPT 弹窗" : slide?.available ? "已连接" : "未连接" }}</b>
+        POWERPOINT <b>{{ slide?.busy ? "通道忙碌，仍可点击和翻页" : slide?.available ? "已连接" : "未连接" }}</b>
       </span>
       <span class="stat">
         当前页 <b>{{ slide?.available ? slide.current + "/" + slide.total : "—" }}</b>

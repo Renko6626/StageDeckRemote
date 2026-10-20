@@ -23,6 +23,7 @@ use serde_json::json;
 
 use crate::app_state::AppState;
 use crate::{auth, capture, input, log};
+use axum::middleware::{self, Next};
 
 // 主持人端静态资源在编译期内嵌，运行时由 Axum 直接吐出（开发/发布行为一致）。
 const PRESENTER_HTML: &str = include_str!("../../src/presenter/presenter.html");
@@ -50,6 +51,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/action", post(action))
         .route("/api/messages", get(messages))
         .route("/api/message", post(message))
+        .route("/api/diagnostics", post(phone_diagnostics))
         // /presenter/api/* aliases — same handlers, different prefix.
         // presenter.html sets <base href="/presenter/"> so relative "api/foo"
         // resolves to "/presenter/api/foo"; old /api/* routes kept for back-compat.
@@ -67,8 +69,50 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/presenter/api/lock", post(lock))
         .route("/presenter/api/unlock", post(unlock))
         .route("/presenter/api/message", post(message))
+        .route("/presenter/api/diagnostics", post(phone_diagnostics))
+        .layer(middleware::from_fn_with_state(state.clone(), request_diagnostics))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
+}
+
+async fn request_diagnostics(
+    State(state): State<Arc<AppState>>, request: axum::extract::Request, next: Next,
+) -> Response {
+    static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = request.uri().path().to_owned();
+    let method = request.method().to_string();
+    // Streaming responses are logged at connection setup; no frame/body/query data.
+    let report = !path.ends_with("/diagnostics");
+    let level = if method == "GET" { "debug" } else { "info" };
+    log::REQUEST_ID.scope(id, async {
+        let started = std::time::Instant::now();
+        if report { log::diagnostic(&state, level, "http", format!("{method} {path} begin")); }
+        let response = next.run(request).await;
+        if report {
+            let level = if response.status().is_client_error() || response.status().is_server_error() { "warn" } else { level };
+            log::diagnostic(&state, level, "http", format!("{method} {path} HTTP {} elapsed_ms={}", response.status().as_u16(), started.elapsed().as_millis()));
+        }
+        response
+    }).await
+}
+
+#[derive(Deserialize)]
+struct PhoneDiagnostic {
+    token: Option<String>,
+    client_id: Option<String>,
+    kind: String,
+    message: String,
+}
+
+async fn phone_diagnostics(State(state): State<Arc<AppState>>, Json(report): Json<PhoneDiagnostic>) -> Response {
+    if !token_ok(&state, &report.token) { return json_err(StatusCode::UNAUTHORIZED, "invalid_token"); }
+    if !matches!(report.kind.as_str(), "request" | "script" | "connection")
+        || report.message.chars().count() > 2000
+        || report.client_id.as_ref().is_none_or(|id| id.is_empty() || id.len() > 128)
+    { return json_err(StatusCode::BAD_REQUEST, "invalid_diagnostic"); }
+    log::diagnostic(&state, "warn", "phone", format!("client={} kind={} {}", report.client_id.unwrap(), report.kind, report.message));
+    ok_json()
 }
 
 // ---- 公共辅助 ----------------------------------------------------------------
@@ -139,7 +183,11 @@ where
         }
         Reserve::Reserved => {}
     }
+    let started = std::time::Instant::now();
+    log::diagnostic(state, "info", "operation", format!("op={id} begin permissions=allowed"));
     let (code, body) = work().await;
+    log::diagnostic(state, if code.is_success() { "info" } else { "warn" }, "operation",
+        format!("op={id} complete HTTP {} elapsed_ms={}", code.as_u16(), started.elapsed().as_millis()));
     state.lock().ops.complete(id, CachedResp { status: code.as_u16(), body: body.clone() });
     (code, Json(body)).into_response()
 }
@@ -315,6 +363,11 @@ fn do_click(state: &Arc<AppState>, x: f64, y: f64) -> Outcome {
         rect.left, rect.top, rect.width, rect.height, x, y,
     );
 
+    log::diagnostic(state, "debug", "input", format!(
+        "click window={handle} rect=({},{},{},{}) normalized=({x:.3},{y:.3}) screen=({screen_x},{screen_y}) begin",
+        rect.left, rect.top, rect.width, rect.height,
+    ));
+
     match input::click_screen(screen_x, screen_y) {
         Ok(()) => {
             log::event(
@@ -363,30 +416,26 @@ async fn page_turn(state: &Arc<AppState>, req: &ActionReq, forward: bool) -> Res
 }
 
 async fn do_page_turn(state: &Arc<AppState>, forward: bool) -> Outcome {
-    // SendInput 回退需要的目标窗口 handle（COM 失败时置前窗口）。
+    // 与导播本地翻页一致：激活目标窗口后发按键，不等待 COM 状态读取。
     let handle = {
         let i = state.lock();
         i.selected_window.as_ref().map(|w| w.handle)
     };
-    // COM 翻页 + SendInput 回退都是阻塞型调用,整体放到 blocking 线程池。
     let worker_state = state.clone();
-    let result = log::run_operation(state.clone(), if forward { "主持人下一页" } else { "主持人上一页" }.into(), move || {
+    let result = tokio::task::spawn_blocking(move || {
         if !worker_state.click_allowed() { return Err("control_locked".into()); }
-        // COM 翻页优先；失败回退 SendInput（先置前窗口）。
-        let com_result = if forward { crate::ppt_com::nav_next() } else { crate::ppt_com::nav_prev() };
-        match com_result {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                log::event(&worker_state, format!("COM 翻页失败：{error}；尝试键盘回退"));
-                if let Some(handle) = handle {
-                    crate::window_manager::bring_to_front(handle);
-                }
-                let r = if forward { input::key_next() } else { input::key_prev() };
-                r.map_err(|e| e.to_string())
-            }
+        if let Some(handle) = handle {
+            let activated = crate::window_manager::bring_to_front(handle);
+            log::diagnostic(&worker_state, if activated { "debug" } else { "warn" }, "input",
+                format!("window={handle} activate accepted={activated}"));
         }
+        log::diagnostic(&worker_state, "info", "input", if forward { "SendInput Right begin" } else { "SendInput Left begin" });
+        let r = if forward { input::key_next() } else { input::key_prev() };
+        log::diagnostic(&worker_state, if r.is_ok() { "info" } else { "error" }, "input",
+            format!("SendInput {} result={}", if forward { "Right" } else { "Left" }, if r.is_ok() { "sent" } else { "failed" }));
+        r.map_err(|e| e.to_string())
     })
-    .await;
+    .await.unwrap_or_else(|e| Err(format!("翻页任务异常：{e}")));
     match result {
         Ok(()) => {
             log::event(state, if forward { "下一页" } else { "上一页" });
@@ -611,6 +660,22 @@ mod tests {
         state
     }
 
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn page_turn_reaches_input_without_waiting_for_busy_com() {
+        let state = armed_state();
+        let _permit = state.ppt_gate.clone().acquire_owned().await.unwrap();
+        for forward in [true, false] {
+            let outcome = tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                do_page_turn(&state, forward),
+            ).await.expect("基础翻页不应等待 COM 通道");
+            // Linux 真实输入桩返回 Unsupported，证明请求已走到输入路径。
+            assert_eq!(outcome.0, StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(log::recent(&state, 10).iter().any(|e| e.message.contains("仅 Windows")));
+        }
+    }
+
     async fn post_json(app: &Router, path: &str, body: &str) -> (StatusCode, serde_json::Value) {
         let resp = app.clone().oneshot(axum::http::Request::builder()
             .method("POST").uri(path).header("content-type", "application/json")
@@ -621,10 +686,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn phone_reports_require_authentication_and_persist_without_credentials() {
+        let state = armed_state();
+        let dir = std::env::temp_dir().join(format!("stagedeck-phone-report-{}-{}", std::process::id(), now_ms()));
+        state.diagnostics.initialize(Ok(dir.clone()));
+        *state.relay_config.lock().unwrap() = Some(crate::relay_client::RelayConfig {
+            base_url: "https://relay.invalid".into(), session_id: "test".into(), secret: "private-relay-key".into(),
+        });
+        let app = router(state.clone());
+        let (status, _) = post_json(&app, "/api/diagnostics", r#"{"token":"wrong","client_id":"phone","kind":"script","message":"must not be logged"}"#).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let body = json!({"token":"test-secret", "client_id":"phone", "kind":"script", "message":"script failure test-secret private-relay-key https://host/?token=unknown-value&secret=other-value"});
+        let (status, _) = post_json(&app, "/presenter/api/diagnostics", &body.to_string()).await;
+        assert_eq!(status, StatusCode::OK);
+        let output = std::fs::read_to_string(dir.join("diagnostics.jsonl")).unwrap();
+        assert!(output.contains("script failure") && output.contains("\"component\":\"phone\""));
+        for secret in ["test-secret", "private-relay-key", "unknown-value", "other-value", "must not be logged"] {
+            assert!(!output.contains(secret), "diagnostic leaked {secret}");
+        }
+        let body = json!({"token":"test-secret", "client_id":"phone", "kind":"script", "message":"x".repeat(2001)});
+        assert_eq!(post_json(&app, "/api/diagnostics", &body.to_string()).await.0, StatusCode::BAD_REQUEST);
+        drop(app);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn same_op_id_is_executed_once_and_replayed() {
         let state = armed_state();
         let app = router(state.clone());
-        // Linux 上 nav_next 是 stub → 走 SendInput stub;无论结果如何,两次必须一致且只执行一次。
+        // Linux 上 SendInput 是 stub；无论结果如何，两次必须一致且只执行一次。
         let body = r#"{"token":"test-secret","client_id":"phone","op_id":"phone-7"}"#;
         let first = post_json(&app, "/api/next", body).await;
         let logs_after_first = log::recent(&state, 100).len();

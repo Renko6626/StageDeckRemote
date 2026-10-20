@@ -35,9 +35,26 @@ pub async fn read_slide_state(state: std::sync::Arc<crate::app_state::AppState>)
         Ok(p) => p,
         Err(_) => return SlideState::busy(),
     };
+    static NEXT_PROBE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let probe_id = NEXT_PROBE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let probe_state = state.clone();
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        slide_state()
+        crate::log::with_com_context(probe_state.clone(), format!("probe-{probe_id}"), || {
+            let started = std::time::Instant::now();
+            crate::log::com_trace("slide_state begin");
+            let result = slide_state();
+            match &result {
+                Ok(s) => crate::log::com_trace(format!(
+                    "slide_state complete available={} busy={} in_show={} current={} total={} actions={} elapsed_ms={}",
+                    s.available, s.busy, s.in_show, s.current, s.total, s.actions.len(), started.elapsed().as_millis(),
+                )),
+                Err(_) => crate::log::diagnostic(&probe_state, "debug", "com", format!(
+                    "probe-{probe_id} slide_state failed elapsed_ms={}", started.elapsed().as_millis(),
+                )),
+            }
+            result
+        })
     });
     match tokio::time::timeout(std::time::Duration::from_secs(2), task).await {
         Ok(Ok(Ok(s))) => {
@@ -108,7 +125,10 @@ mod com {
     }
     impl ComGuard {
         pub fn init() -> Self {
+            let started = std::time::Instant::now();
+            crate::log::com_trace("CoInitializeEx begin");
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            crate::log::com_trace(format!("CoInitializeEx complete HRESULT=0x{:08X} elapsed_ms={}", hr.0 as u32, started.elapsed().as_millis()));
             // 只有本次确实初始化成功（S_OK/S_FALSE）才在 Drop 里平衡 CoUninitialize；
             // RPC_E_CHANGED_MODE 表示线程已被别处初始化为不同公寓，本次未持有引用，不能 uninit。
             ComGuard { uninit: hr.is_ok() }
@@ -124,14 +144,36 @@ mod com {
 
     /// 连接已运行的 PowerPoint.Application，返回其 IDispatch。
     pub fn connect() -> Result<IDispatch, String> {
-        unsafe {
-            let clsid = CLSIDFromProgID(w!("PowerPoint.Application"))
-                .map_err(|e| format!("找不到 PowerPoint：{e}"))?;
+        let started = std::time::Instant::now();
+        crate::log::com_trace("connect begin");
+        let result = (|| unsafe {
+            let step = std::time::Instant::now();
+            crate::log::com_trace("CLSIDFromProgID begin");
+            let clsid = CLSIDFromProgID(w!("PowerPoint.Application"));
+            trace_result("CLSIDFromProgID", step, &clsid);
+            let clsid = clsid.map_err(|e| format!("找不到 PowerPoint：{e}"))?;
             let mut unk: Option<IUnknown> = None;
-            GetActiveObject(&clsid, None, &mut unk)
-                .map_err(|e| format!("无法连接 PowerPoint，请确认程序已打开：{e}"))?;
+            let step = std::time::Instant::now();
+            crate::log::com_trace("GetActiveObject begin");
+            let active = GetActiveObject(&clsid, None, &mut unk);
+            trace_result("GetActiveObject", step, &active);
+            active.map_err(|e| format!("无法连接 PowerPoint，请确认程序已打开：{e}"))?;
             let unk = unk.ok_or_else(|| "GetActiveObject 返回空".to_string())?;
-            unk.cast::<IDispatch>().map_err(|e| e.to_string())
+            let step = std::time::Instant::now();
+            crate::log::com_trace("QueryInterface IDispatch begin");
+            let dispatch = unk.cast::<IDispatch>();
+            trace_result("QueryInterface IDispatch", step, &dispatch);
+            dispatch.map_err(|e| e.to_string())
+        })();
+        crate::log::com_trace(format!("connect {} elapsed_ms={}", if result.is_ok() { "complete" } else { "failed" }, started.elapsed().as_millis()));
+        result
+    }
+
+    // Never format COM results or exception descriptions: they may contain slide or VBA text.
+    fn trace_result<T>(step: &str, started: std::time::Instant, result: &windows::core::Result<T>) {
+        match result {
+            Ok(_) => crate::log::com_trace(format!("{step} complete elapsed_ms={}", started.elapsed().as_millis())),
+            Err(e) => crate::log::com_trace(format!("{step} failed HRESULT=0x{:08X} elapsed_ms={}", e.code().0 as u32, started.elapsed().as_millis())),
         }
     }
 
@@ -140,14 +182,28 @@ mod com {
     }
 
     fn invoke_detailed(disp: &IDispatch, name: &str, flags: DISPATCH_FLAGS, args: &[VARIANT]) -> Result<VARIANT, crate::macro_execution::InvokeFailure> {
+        let started = std::time::Instant::now();
+        crate::log::com_trace(format!("member {name} begin"));
+        let result = invoke_inner(disp, name, flags, args);
+        match &result {
+            Ok(_) => crate::log::com_trace(format!("member {name} complete elapsed_ms={}", started.elapsed().as_millis())),
+            Err(e) => crate::log::com_trace(format!("member {name} failed HRESULT=0x{:08X} elapsed_ms={}", e.hresult, started.elapsed().as_millis())),
+        }
+        result
+    }
+
+    fn invoke_inner(disp: &IDispatch, name: &str, flags: DISPATCH_FLAGS, args: &[VARIANT]) -> Result<VARIANT, crate::macro_execution::InvokeFailure> {
         use crate::macro_execution::InvokeFailure;
         use windows::Win32::System::Com::EXCEPINFO;
         unsafe {
             let wname: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
             let names = [PCWSTR(wname.as_ptr())];
             let mut dispid: i32 = 0;
-            disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid)
-                .map_err(|e| InvokeFailure { hresult: e.code().0 as u32, detail: format!("{name}: 找不到成员（{e}）") })?;
+            let step = std::time::Instant::now();
+            crate::log::com_trace(format!("GetIDsOfNames {name} begin"));
+            let lookup = disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid);
+            trace_result(&format!("GetIDsOfNames {name}"), step, &lookup);
+            lookup.map_err(|e| InvokeFailure { hresult: e.code().0 as u32, detail: format!("{name}: 找不到成员（{e}）") })?;
             let mut argv: Vec<VARIANT> = args.iter().rev().cloned().collect();
             let params = DISPPARAMS {
                 rgvarg: if argv.is_empty() { std::ptr::null_mut() } else { argv.as_mut_ptr() },
@@ -157,11 +213,17 @@ mod com {
             let mut result = VARIANT::default();
             let mut exception = EXCEPINFO::default();
             let mut arg_error = u32::MAX;
+            let step = std::time::Instant::now();
+            crate::log::com_trace(format!("Invoke {name} flags={} begin", flags.0));
             let outcome = disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, flags, &params,
                 Some(&mut result), Some(&mut exception), Some(&mut arg_error));
+            trace_result(&format!("Invoke {name}"), step, &outcome);
             if outcome.is_err() {
                 if let Some(fill) = exception.pfnDeferredFillIn {
-                    let _ = fill(&mut exception);
+                    let step = std::time::Instant::now();
+                    crate::log::com_trace(format!("DeferredFillIn {name} begin"));
+                    let hr = fill(&mut exception);
+                    crate::log::com_trace(format!("DeferredFillIn {name} complete HRESULT=0x{:08X} elapsed_ms={}", hr.0 as u32, step.elapsed().as_millis()));
                 }
             }
             let detail = outcome.as_ref().err().map(|e| format!(
@@ -219,8 +281,11 @@ mod com {
             let wname: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
             let names = [PCWSTR(wname.as_ptr())];
             let mut dispid: i32 = 0;
-            disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid)
-                .map_err(|e| format!("{name}: 找不到属性（{e}）"))?;
+            let step = std::time::Instant::now();
+            crate::log::com_trace(format!("GetIDsOfNames {name} propertyput begin"));
+            let lookup = disp.GetIDsOfNames(&IID_NULL, names.as_ptr(), 1, LOCALE_USER_DEFAULT, &mut dispid);
+            trace_result(&format!("GetIDsOfNames {name} propertyput"), step, &lookup);
+            lookup.map_err(|e| format!("{name}: 找不到属性（{e}）"))?;
             let mut argv = [VARIANT::from(value)];
             let mut named = [DISPID_PROPERTYPUT];
             let params = DISPPARAMS {
@@ -229,8 +294,11 @@ mod com {
                 rgdispidNamedArgs: named.as_mut_ptr(),
                 cNamedArgs: 1,
             };
-            disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, None, None, None)
-                .map_err(|e| format!("{name}: 写属性失败（{e}）"))?;
+            let step = std::time::Instant::now();
+            crate::log::com_trace(format!("Invoke {name} propertyput begin"));
+            let outcome = disp.Invoke(dispid, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, None, None, None);
+            trace_result(&format!("Invoke {name} propertyput"), step, &outcome);
+            outcome.map_err(|e| format!("{name}: 写属性失败（{e}）"))?;
             Ok(())
         }
     }
@@ -429,16 +497,6 @@ fn show_view() -> Result<windows::Win32::System::Com::IDispatch, String> {
 }
 
 #[cfg(windows)]
-pub fn nav_next() -> Result<(), String> {
-    let _co = com::ComGuard::init();
-    com::call_void(&show_view()?, "Next", &[])
-}
-#[cfg(windows)]
-pub fn nav_prev() -> Result<(), String> {
-    let _co = com::ComGuard::init();
-    com::call_void(&show_view()?, "Previous", &[])
-}
-#[cfg(windows)]
 pub fn set_black(on: bool) -> Result<(), String> {
     let _co = com::ComGuard::init();
     // ppSlideShowBlackScreen=3, ppSlideShowRunning=1
@@ -447,10 +505,6 @@ pub fn set_black(on: bool) -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub fn trigger_action(_shape_id: &str, _report: impl FnMut(&str)) -> Result<String, String> { Err("仅 Windows".into()) }
-#[cfg(not(windows))]
-pub fn nav_next() -> Result<(), String> { Err("仅 Windows".into()) }
-#[cfg(not(windows))]
-pub fn nav_prev() -> Result<(), String> { Err("仅 Windows".into()) }
 #[cfg(not(windows))]
 pub fn set_black(_on: bool) -> Result<(), String> { Err("仅 Windows".into()) }
 

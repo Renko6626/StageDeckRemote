@@ -75,7 +75,58 @@
   };
   var lastActionsKey = ""; // avoid rebuilding the grid every tick
 
-  function api(path, body, timeoutMs) {
+  var diagnosticTimes = Object.create(null);
+  function diagnosticText(value) {
+    var text = String(value || "");
+    if (token) {
+      [token, encodeURIComponent(token), encodeURI(token)].forEach(function (secret) {
+        text = text.split(secret).join("[redacted]");
+      });
+    }
+    // Error messages may embed URLs; never send their queries or the page address.
+    return text.replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+      .replace(/(?:\/|\b)[^\s?]*\?[^\s"'<>]+/g, "[url]").slice(0, 2000);
+  }
+  function reportDiagnostic(kind, key, message) {
+    try {
+      var now = Date.now();
+      if (diagnosticTimes[key] !== undefined && now - diagnosticTimes[key] < 30000) return;
+      diagnosticTimes[key] = now;
+      var controller = new AbortController();
+      var timeout = setTimeout(function () { controller.abort(); }, 2500);
+      var path = "api/diagnostics";
+      if (IS_RELAY) path += "?token=" + encodeURIComponent(token);
+      // Deliberately bypass api: diagnostics must never report their own failures.
+      Promise.resolve(fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token, client_id: cid, kind: kind, message: diagnosticText(message) }),
+        signal: controller.signal,
+      })).catch(function () {}).finally(function () { clearTimeout(timeout); });
+    } catch (_) {
+      clearTimeout(timeout); // Also cover a synchronous fetch failure.
+    }
+  }
+  window.addEventListener("error", function (event) {
+    // No filename, page URL, stack or source line.
+    reportDiagnostic("script", "script:error", "error: " + diagnosticText(event.message || "script error"));
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event.reason;
+    reportDiagnostic("script", "script:rejection", "unhandledrejection: " +
+      diagnosticText(reason instanceof Error ? reason.message : "promise rejected"));
+  });
+
+  function api(path, body, timeoutMs, attempt) {
+    var cleanPath = path.split("?")[0];
+    var started = Date.now();
+    var method = body ? "POST" : "GET";
+    function failed(error) {
+      var kind = /api\/(status|slide_state)$/.test(cleanPath) ? "connection" : "request";
+      reportDiagnostic(kind, cleanPath + ":" + error,
+        method + " " + cleanPath + " duration_ms=" + (Date.now() - started) +
+        (body && body.op_id ? " op_id=" + body.op_id + " attempt=" + (attempt || 1) : "") + " " + error);
+    }
     // Relay checks the query token before tunneling; the director checks the JSON token.
     if (body && IS_RELAY) path += (path.indexOf("?") === -1 ? "?" : "&") + "token=" + encodeURIComponent(token);
     var opts = body
@@ -89,13 +140,23 @@
     opts.signal = controller.signal;
     if (timeoutMs === undefined) timeoutMs = body ? 12000 : 5000;
     var timeout = setTimeout(function () { controller.abort(); }, timeoutMs);
-    return fetch(path, opts).finally(function () { clearTimeout(timeout); });
+    return fetch(path, opts).then(function (response) {
+      if (!response.ok) failed("status=" + response.status);
+      return response;
+    }, function (error) {
+      failed(controller.signal.aborted ? "error=timeout" : "error=network");
+      throw error;
+    }).finally(function () { clearTimeout(timeout); });
   }
 
   // ── gating ──（主持人侧一切操作都需 ARM 解锁)
   function canAct() {
     var t = tier();
-    return (t === "link" || t === "weak") && state.allowed && state.unlocked && state.isController && !state.actionPending && !state.com.busy;
+    return (t === "link" || t === "weak") && state.allowed && state.unlocked && state.isController && !state.actionPending;
+  }
+
+  function canUseCom() {
+    return canAct() && !state.com.busy;
   }
 
   // ── connection tier: "connecting" | "link" | "weak" | "down" ──
@@ -163,16 +224,16 @@
     // COM 可用性(MAIN)
     var comUp = state.com.available;
     el.comUnavail.textContent = state.com.busy
-      ? "PowerPoint 忙，请等待当前操作完成；若长时间无响应，请导播检查 PPT / VBA 弹窗"
+      ? "PowerPoint 通道忙碌，宏、黑屏和恢复暂不可用；仍可翻页，或切到屏幕同步点击画面"
       : "PowerPoint 未连接 — 请导播检查 PowerPoint，或切到 SYNC 屏幕同步";
     el.comUnavail.hidden = comUp;
     el.actions.hidden = !comUp;
     el.actionsEmpty.hidden = !comUp || state.com.actions.length > 0;
 
-    // 翻页坞:与宏按钮一致,需 ARM(canAct)。未解锁则全禁用 →「锁就全锁」。
-    var t = !canAct();
+    // 基础翻页不依赖 COM；黑屏和恢复仍需 COM 通道。
     el.dockBtns.forEach(function (b) {
-      b.disabled = t;
+      var action = b.getAttribute("data-action");
+      b.disabled = (action === "black" || action === "restore") ? !canUseCom() : !canAct();
     });
 
     renderActions();
@@ -192,7 +253,7 @@
         el.actions.appendChild(b);
       });
     }
-    var ok = canAct();
+    var ok = canUseCom();
     Array.prototype.forEach.call(el.actions.children, function (b) {
       b.disabled = !ok;
     });
@@ -332,7 +393,7 @@
       flashNotice("PowerPoint 通道正忙，本次操作未执行；请稍后再按，持续忙碌请导播检查弹窗");
     } else if (r && !r.ok) {
       flashNotice(r.status === 504
-        ? "执行超时，结果未知；请导播检查 PPT 弹窗，勿重复点击"
+        ? "等待执行结果超时，结果未知；请导播查看日志和 PPT 弹窗，勿重复点击"
         : "操作失败，请导播查看日志和 PPT 弹窗（HTTP " + r.status + "）");
     }
     poll(); // refresh gating immediately in all cases
@@ -356,7 +417,7 @@
       function once() {
         attempt++;
         var isLast = attempt >= OP_MAX_ATTEMPTS;
-        api(path, payload, isLast ? finalTimeoutMs : OP_FAST_MS)
+        api(path, payload, isLast ? finalTimeoutMs : OP_FAST_MS, attempt)
           .then(function (r) {
             if (!isLast && (r.status === 502 || r.status === 503)) return once();
             // 读一次 body 里的 reason(409 要区分 op_in_flight / ppt_busy);读不到就空。
@@ -375,13 +436,14 @@
   // 统一入口:pending 守卫 + 按钮 "…" + 结果提示 + 立刻刷新页码。
   function runOp(btn, path, body, finalTimeoutMs) {
     if (state.actionPending || !canAct()) return;
+    if ((path === "api/action" || path === "api/black" || path === "api/restore") && !canUseCom()) return;
     state.actionPending = true;
     if (btn) btn.classList.add("sending");
     render();
     sendOp(path, body, finalTimeoutMs)
       .then(function (res) {
         if (res.unknown) {
-          flashNotice("未送达或结果未知，核对页码后再按");
+          flashNotice("连接异常或等待超时，结果未知；请核对画面并让导播查看日志，勿重复点击");
         } else {
           res.resp.reason = res.reason;
           onActionResp(res.resp);

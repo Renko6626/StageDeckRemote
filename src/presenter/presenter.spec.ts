@@ -1,9 +1,21 @@
 import html from './presenter.html?raw';
 import script from './presenter.js?raw';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const initialUrl = window.location.href;
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState(null, '', initialUrl); });
+const diagnosticListeners: Array<[string, EventListenerOrEventListenerObject]> = [];
+beforeEach(() => {
+  const add = window.addEventListener.bind(window);
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+    if (type === 'error' || type === 'unhandledrejection') diagnosticListeners.push([type, listener]);
+    add(type, listener, options);
+  });
+});
+afterEach(() => {
+  for (const [type, listener] of diagnosticListeners.splice(0)) window.removeEventListener(type, listener);
+  vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  window.history.replaceState(null, '', initialUrl);
+});
 
 function mountPresenter(
   slideResponse: () => Promise<Response>,
@@ -123,14 +135,19 @@ it('recovers to LINK on the next successful heartbeat without re-arming', async 
 // ── 幂等重试(spec §二) ──
 type Call = { url: string; body: any; signal: AbortSignal };
 /** 挂载并让 status/slide 正常;返回对 /api/next 的调用记录与可编程的应答队列。 */
-async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status: number; reason: string }>, baseHref = '/presenter/') {
+async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status: number; reason: string }>, baseHref = '/presenter/', diagnosticFails = false) {
   vi.useFakeTimers();
   document.documentElement.innerHTML = html;
   document.querySelector('base')!.setAttribute('href', baseHref);
   const calls: Call[] = [];
+  const diagnostics: Call[] = [];
   vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => {
     if (url.includes('slide_state')) return okSlide();
     if (url.includes('status')) return okStatus();
+    if (url.includes('diagnostics')) {
+      diagnostics.push({ url, body: JSON.parse(options.body as string), signal: options.signal as AbortSignal });
+      return diagnosticFails ? Promise.reject(new TypeError('offline')) : Promise.resolve(new Response('{}'));
+    }
     calls.push({ url, body: JSON.parse(options.body as string), signal: options.signal as AbortSignal });
     const a = answers.shift();
     if (a === 'hang') return hangUntilAbort(options.signal as AbortSignal);
@@ -143,7 +160,7 @@ async function mountForOps(answers: Array<'hang' | 'neterr' | number | { status:
   await vi.advanceTimersByTimeAsync(50);
   const nextBtn = document.querySelector('.d-next') as HTMLButtonElement;
   expect(nextBtn.disabled).toBe(false);
-  return { calls, nextBtn, banner: () => document.getElementById('dir-banner-text')?.textContent };
+  return { calls, diagnostics, nextBtn, banner: () => document.getElementById('dir-banner-text')?.textContent };
 }
 
 it.each([
@@ -233,6 +250,15 @@ it('distinguishes a busy PowerPoint from a lost connection', async () => {
   await vi.advanceTimersByTimeAsync(100);
   expect(document.getElementById('conn-text')?.textContent).toBe('LINK');
   expect(document.getElementById('com-unavail')?.textContent).toContain('忙');
+  expect((document.querySelector('.d-next') as HTMLButtonElement).disabled).toBe(false);
+  expect((document.querySelector('[data-action="prev"]') as HTMLButtonElement).disabled).toBe(false);
+  expect((document.querySelector('[data-action="black"]') as HTMLButtonElement).disabled).toBe(true);
+  expect((document.querySelector('[data-action="restore"]') as HTMLButtonElement).disabled).toBe(true);
+  const preview = document.getElementById('preview')!;
+  vi.spyOn(preview, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 100, height: 100 } as DOMRect);
+  preview.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 50, clientY: 50 }));
+  await vi.advanceTimersByTimeAsync(50);
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('api/click'))).toBe(true);
 });
 
 it('shows a macro failure instead of silently swallowing HTTP 500', async () => {
@@ -244,4 +270,51 @@ it('shows a macro failure instead of silently swallowing HTTP 500', async () => 
   (document.querySelector('.act') as HTMLElement).click();
   await vi.advanceTimersByTimeAsync(100);
   expect(document.getElementById('dir-banner-text')?.textContent).toContain('失败');
+});
+
+
+it('reports an operation failure with its request identity and no request contents', async () => {
+  const { calls, diagnostics, nextBtn } = await mountForOps([500]);
+  expect(diagnostics).toHaveLength(0); // Healthy polling sends no diagnostics.
+  nextBtn.click();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0].body).toMatchObject({ kind: 'request' });
+  expect(diagnostics[0].body.message).toContain('POST api/next duration_ms=');
+  expect(diagnostics[0].body.message).toContain('op_id=' + calls[0].body.op_id + ' attempt=1 status=500');
+  expect(diagnostics[0].body.message).not.toContain('token=');
+});
+
+it('ignores reporting failures without recursion or changing operation retries', async () => {
+  const { calls, diagnostics, nextBtn, banner } = await mountForOps(['neterr', 'neterr', 200], '/presenter/', true);
+  nextBtn.click();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(calls).toHaveLength(3);
+  expect(diagnostics).toHaveLength(1); // Repeated network errors are suppressed for 30 seconds.
+  expect(nextBtn.disabled).toBe(false);
+  expect(banner()).toBe('');
+});
+
+it('redacts raw and encoded tokens and page URLs in script errors and rejections', async () => {
+  const token = 'secret+中文/token';
+  window.history.replaceState(null, '', '/?token=' + encodeURIComponent(token));
+  const { diagnostics } = await mountForOps([], '/r/PROM-2026/presenter/');
+  window.dispatchEvent(new ErrorEvent('error', {
+    message: 'Failure ' + token + ' ' + encodeURIComponent(token) + ' https://host/presenter?token=' + token,
+    filename: window.location.href,
+  }));
+  const rejection = new Event('unhandledrejection');
+  Object.defineProperty(rejection, 'reason', { value: new Error('Rejected ' + token) });
+  window.dispatchEvent(rejection);
+  await vi.advanceTimersByTimeAsync(10);
+  expect(diagnostics).toHaveLength(2);
+  for (const report of diagnostics) {
+    expect(report.body.kind).toBe('script');
+    expect(report.body.message).toContain('[redacted]');
+    expect(report.body.message).not.toContain(token);
+    expect(report.body.message).not.toContain(encodeURIComponent(token));
+    expect(report.body.message).not.toContain('https://host');
+    expect(report.body.message).not.toContain('?token');
+    expect(new URL(report.url, document.baseURI).searchParams.get('token')).toBe(token);
+  }
 });

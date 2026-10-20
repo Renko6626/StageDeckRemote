@@ -155,6 +155,7 @@
 
 - 字段：`available` = PowerPoint 可达；`busy` = COM 通道被占用或本次读取超时；`in_show` = 在放映态；`actions` = 当前页 `Shape.ActionSettings(ppMouseClick).Action == 8`（运行宏）的 shape 列表；`id` = shape name，传给 §2.10 的 `action`；`macro_name` 供显示和日志使用。
 - 失败：`401 invalid_token`。PowerPoint 不可达时仍返回 200，`available:false`；忙碌时为 `available:false,busy:true`，不等于网络断开。读取超过 2 秒返回忙碌状态，后台 COM 调用仍持有通道直到实际结束。
+- 手机继续轮询此状态。`busy:true` 时禁用宏、黑屏和恢复，保留屏幕点击与基础翻页；基础翻页激活选中窗口后模拟方向键，不经过 COM 通道。所有操作仍须通过原有权限与锁定检查。
 
 ### 2.7 `POST /api/click`
 
@@ -189,7 +190,7 @@
 - 请求体：`{ "token": "xxxx", "client_id": "host-tablet" }`
 - 成功：`200 {"ok":true}`
 - 放行条件：`click_allowed` + `is_controller`。
-- 实现：优先走 `ppt_com::nav_next/prev`（COM）；COM 失败回退 `input::key_next/prev`（SendInput）。
+- 实现：激活选中窗口后调用 `input::key_next/prev`（SendInput），不等待 COM 通道。
 - 失败：`invalid_token`(401) / `not_controller`(403) / `control_locked`(403) / `input_failed`(500)。
 
 ### 2.9 `POST /api/black` · `POST /api/restore`

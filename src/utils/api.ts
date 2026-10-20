@@ -39,6 +39,12 @@ export interface LogEntry {
   message: string;
 }
 
+export interface DiagnosticsStatus {
+  enabled: boolean;
+  directory: string | null;
+  error: string | null;
+}
+
 export interface SlideAction {
   id: string;
   label: string;
@@ -75,6 +81,10 @@ export const api = {
   localNext: () => invoke<void>("local_next"),
   localPrev: () => invoke<void>("local_prev"),
   getLogs: () => invoke<LogEntry[]>("get_logs"),
+  getDiagnosticsStatus: () => invoke<DiagnosticsStatus>("get_diagnostics_status"),
+  setDetailedDiagnostics: (enabled: boolean) =>
+    invoke<DiagnosticsStatus>("set_detailed_diagnostics", { enabled }),
+  openLogsDirectory: () => invoke<void>("open_logs_directory"),
   getSlideState: () => invoke<SlideState>("get_slide_state"),
   getPresets: () => invoke<PresetMessage[]>("get_presets"),
   setPresets: (texts: string[]) => invoke<void>("set_presets", { texts }),

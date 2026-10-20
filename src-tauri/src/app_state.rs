@@ -128,6 +128,7 @@ pub struct Inner {
 }
 
 pub struct AppState {
+    pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub inner: Mutex<Inner>,
     pub capture: crate::capture::CaptureManager,
     /// 收到主持人消息时投递给 Tauri 接收任务(显示软弹窗)。
@@ -155,7 +156,9 @@ impl AppState {
     }
 
     pub fn new(token: String, server_port: u16, message_tx: Sender<HostMessage>) -> Self {
+        let diagnostics = Arc::new(crate::diagnostics::Diagnostics::default());
         AppState {
+            diagnostics: diagnostics.clone(),
             inner: Mutex::new(Inner {
                 selected_window: None,
                 // 默认:远程关闭(日常总闸)、强制锁释放(仅紧急用)、未解锁。
@@ -173,7 +176,7 @@ impl AppState {
                 timer: None,
                 ops: crate::op_cache::OpCache::new(),
             }),
-            capture: crate::capture::CaptureManager::new(),
+            capture: crate::capture::CaptureManager::with_diagnostics(diagnostics),
             message_tx,
             preview_task: Mutex::new(None),
             relay_config: Mutex::new(None),

@@ -6,6 +6,58 @@ use serde::Serialize;
 
 use crate::app_state::AppState;
 
+tokio::task_local! { pub static REQUEST_ID: u64; }
+thread_local! {
+    static COM_CONTEXT: std::cell::RefCell<Option<(std::sync::Arc<AppState>, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn clean(state: &AppState, message: &str) -> String {
+    let token = state.lock().token.clone();
+    let secret = state.relay_config.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map(|c| c.secret.clone()).unwrap_or_default();
+    crate::diagnostics::redact(message, &[token, secret])
+}
+
+pub fn diagnostic(state: &AppState, level: &str, component: &str, message: impl Into<String>) {
+    if level == "debug" && !state.diagnostics.enabled() { return; }
+    let message = message.into();
+    let message = correlated(message);
+    state.diagnostics.write(level, component, &clean(state, &message));
+}
+
+fn correlated(message: String) -> String {
+    if message.starts_with("req#") { return message; }
+    REQUEST_ID.try_with(|id| format!("req#{id} {message}")).unwrap_or(message)
+}
+
+pub fn with_com_context<T>(state: std::sync::Arc<AppState>, label: String, work: impl FnOnce() -> T) -> T {
+    struct Restore(Option<(std::sync::Arc<AppState>, String)>);
+    impl Drop for Restore {
+        fn drop(&mut self) { COM_CONTEXT.with(|context| *context.borrow_mut() = self.0.take()); }
+    }
+    let _restore = Restore(COM_CONTEXT.with(|context| context.replace(Some((state, label)))));
+    work()
+}
+
+pub fn com_trace(message: impl Into<String>) {
+    COM_CONTEXT.with(|context| {
+        if let Some((state, label)) = context.borrow().as_ref() {
+            if state.diagnostics.enabled() {
+                diagnostic(state, "debug", "com", format!("{label} {}", message.into()));
+            }
+        }
+    });
+}
+
+pub fn system_version() -> String {
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        return std::process::Command::new("cmd").args(["/C", "ver"]).creation_flags(0x08000000)
+            .output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().into())
+            .unwrap_or_else(|| "Windows（版本读取失败）".into());
+    }
+    #[cfg(not(windows))] { std::fs::read_to_string("/etc/os-release").ok().and_then(|s| s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(str::to_owned)).unwrap_or_else(|| std::env::consts::OS.into()) }
+}
+
 const MAX_LOGS: usize = 500;
 
 #[derive(Clone, Debug, Serialize)]
@@ -25,6 +77,8 @@ fn now_ms() -> u64 {
 /// 记录一条事件：写入内存缓冲并打印到 stdout。
 pub fn event(state: &AppState, message: impl Into<String>) {
     let message = message.into();
+    let message = correlated(message);
+    let message = clean(state, &message);
     let entry = LogEntry {
         time_ms: now_ms(),
         message: message.clone(),
@@ -38,6 +92,7 @@ pub fn event(state: &AppState, message: impl Into<String>) {
         }
     }
     println!("[stagedeck] {message}");
+    state.diagnostics.write("info", "event", &message);
 }
 
 /// 取最近 `max` 条日志（导播端 GUI 展示用）。
@@ -65,6 +120,7 @@ async fn run_operation_timeout<T: Send + 'static>(
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = format!("操作#{id} {label}");
+    let label = REQUEST_ID.try_with(|request| format!("req#{request} {label}")).unwrap_or(label);
     // Let a short status probe finish before rejecting an explicit operation.
     // Waiting on the existing semaphore also prevents new probes from overtaking it.
     let permit = match tokio::time::timeout(
@@ -84,7 +140,7 @@ async fn run_operation_timeout<T: Send + 'static>(
     let started = std::time::Instant::now();
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_com_context(worker_state.clone(), worker_label.clone(), work)))
             .unwrap_or_else(|_| Err("执行线程 panic".into()));
         let outcome = match &result {
             Ok(_) => "成功".to_string(),

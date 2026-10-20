@@ -37,6 +37,7 @@ pub fn router() -> Router<Arc<AppCtx>> {
         .route("/r/:sid/api/lock", any(tunnel_post))
         .route("/r/:sid/api/unlock", any(tunnel_post))
         .route("/r/:sid/api/message", any(tunnel_post))
+        .route("/r/:sid/api/diagnostics", any(tunnel_post))
         .route("/r/:sid/api/stream.mjpg", get(stream_mjpeg))
         // /r/:sid/presenter/api/* aliases — relay-served presenter uses
         // <base href="/r/<sid>/presenter/">, so relative "api/foo" resolves
@@ -56,6 +57,7 @@ pub fn router() -> Router<Arc<AppCtx>> {
         .route("/r/:sid/presenter/api/lock", any(tunnel_post))
         .route("/r/:sid/presenter/api/unlock", any(tunnel_post))
         .route("/r/:sid/presenter/api/message", any(tunnel_post))
+        .route("/r/:sid/presenter/api/diagnostics", any(tunnel_post))
         .route("/r/:sid/presenter/api/stream.mjpg", get(stream_mjpeg))
         // Presenter 静态资源 + <base href> 注入
         .route("/r/:sid/presenter", get(presenter_html))

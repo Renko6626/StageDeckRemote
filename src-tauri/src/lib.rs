@@ -10,6 +10,7 @@ mod capture;
 mod capture_session;
 mod commands;
 mod config;
+mod diagnostics;
 mod frame_broker;
 mod input;
 mod log;
@@ -56,11 +57,18 @@ pub fn run() {
             // 隐藏的 toast 窗口仍然存活；主窗口销毁时必须显式退出，
             // 否则后台 Relay 任务会继续连接并接管同名会话。
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                crate::log::diagnostic(&window.state::<Arc<AppState>>(), "info", "shutdown", "主窗口关闭，应用退出");
                 window.app_handle().exit(0);
             }
         })
         .manage(state)
         .setup(move |app| {
+            server_state.diagnostics.initialize(app.path().app_log_dir().map_err(|e| e.to_string()));
+            crate::log::diagnostic(&server_state, "info", "startup", format!(
+                "启动 version={} os={} arch={} pid={} system={}",
+                env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH,
+                std::process::id(), crate::log::system_version(),
+            ));
             // 先加载持久化配置(端口 + relay)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
             if let Ok(dir) = app.path().app_config_dir() {
                 let cfg = config::Config::load(&dir.join("config.json"));
@@ -82,6 +90,9 @@ pub fn run() {
             }
 
             // 构建一次 router,供 LAN 监听与 relay 客户端共享。
+            let port = server_state.lock().server_port;
+            let relay_enabled = server_state.relay_config.lock().unwrap_or_else(|p| p.into_inner()).is_some();
+            crate::log::diagnostic(&server_state, "info", "startup", format!("配置 port={port} relay_enabled={relay_enabled}"));
             let router = std::sync::Arc::new(crate::routes::router(server_state.clone()));
 
             // 后台启动局域网 Web 服务(主持人端入口)。
@@ -161,6 +172,9 @@ pub fn run() {
             commands::local_next,
             commands::local_prev,
             commands::get_logs,
+            commands::get_diagnostics_status,
+            commands::set_detailed_diagnostics,
+            commands::open_logs_directory,
             commands::vba_list_macros,
             commands::vba_run_macro,
             commands::get_slide_state,
