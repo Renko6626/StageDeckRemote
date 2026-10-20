@@ -52,6 +52,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            // 隐藏的 toast 窗口仍然存活；主窗口销毁时必须显式退出，
+            // 否则后台 Relay 任务会继续连接并接管同名会话。
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .manage(state)
         .setup(move |app| {
             // 先加载持久化配置(端口 + relay)+ 预制消息,再启动 Web 服务(使其绑定配置端口)。
