@@ -1,7 +1,7 @@
 {
   "name": "stagedeck-remote",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "局域网 PPT 远程控制系统 —— 导播端 GUI (Vue 3 + Tauri)",
   "scripts": {
