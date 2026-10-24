@@ -31,9 +31,13 @@ impl SlideState {
 
 /// Shared by HTTP and IPC: COM must never block the GUI or accumulate probe threads.
 pub async fn read_slide_state(state: std::sync::Arc<crate::app_state::AppState>) -> SlideState {
-    let permit = match state.ppt_gate.clone().try_acquire_owned() {
-        Ok(p) => p,
-        Err(_) => return SlideState::busy(),
+    // Director and phone polls may overlap; allow a short probe to finish first.
+    let permit = match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.ppt_gate.clone().acquire_owned(),
+    ).await {
+        Ok(Ok(p)) => p,
+        _ => return SlideState::busy(),
     };
     static NEXT_PROBE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let probe_id = NEXT_PROBE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -511,6 +515,22 @@ pub fn set_black(_on: bool) -> Result<(), String> { Err("仅 Windows".into()) }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn slide_probe_waits_for_an_occupied_channel_instead_of_reporting_busy() {
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let state = std::sync::Arc::new(crate::app_state::AppState::new("secret".into(), 8787, tx));
+        let occupied = state.ppt_gate.clone().acquire_owned().await.unwrap();
+        let probe = tokio::spawn(read_slide_state(state));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let returned_while_occupied = probe.is_finished();
+        drop(occupied);
+        let result = probe.await.unwrap();
+        assert!(!returned_while_occupied, "a short channel collision should wait");
+        // The Linux COM stub is unavailable, but must not be mistaken for busy.
+        assert!(!result.busy);
+    }
 
     #[test]
     fn extracts_subs_and_functions_dedup_skip_private() {

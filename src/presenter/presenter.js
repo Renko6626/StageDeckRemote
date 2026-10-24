@@ -10,7 +10,8 @@
     cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("sd.presenter.cid", cid);
   }
-  var POLL = 900; // ms status + slide_state cadence
+  var POLL = 900; // ms heartbeat cadence
+  var SLIDE_POLL = 2500; // ms minimum between full COM scans
   var SLOW_POLL = 4000; // ms back-off cadence after a 401 (token changed)
   var STATUS_TIMEOUT = 5000; // ms per heartbeat; "弱" tier absorbs jitter instead of a long timeout
   // 连接三档(spec 2026-09-07 §三):距最近一次心跳成功多久。
@@ -262,8 +263,11 @@
   // ── status + slide_state poll ──
   var statusPending = false;
   var slidePending = false;
-  function pollSlide() {
+  var nextSlidePollAt = 0;
+  function pollSlide(force) {
     if (slidePending || state.tokenInvalid || state.actionPending) return;
+    if (!force && Date.now() < nextSlidePollAt) return;
+    nextSlidePollAt = Date.now() + SLIDE_POLL;
     slidePending = true;
     api("api/slide_state?token=" + encodeURIComponent(token)).then(handle401)
       .then(function (r) { if (r && r.ok) return r.json(); })
@@ -274,8 +278,8 @@
       })
       .finally(function () { slidePending = false; });
   }
-  function poll() {
-    pollSlide();
+  function poll(forceSlide) {
+    pollSlide(forceSlide === true);
     if (statusPending) return;
     statusPending = true;
     var t0 = Date.now();
@@ -453,7 +457,7 @@
         state.actionPending = false;
         if (btn) btn.classList.remove("sending");
         render();
-        poll(); // poll() 内含 pollSlide()
+        poll(true); // 操作完成后立即刷新，不等待下一轮定时扫描。
       });
   }
 

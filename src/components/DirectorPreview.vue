@@ -38,7 +38,7 @@ async function drawFrame(buf: ArrayBuffer) {
 
 onMounted(() => {
   void pollState();
-  stateTimer = window.setInterval(pollState, 1500);
+  stateTimer = window.setInterval(pollState, 2500);
   channel = new Channel<ArrayBuffer>();
   channel.onmessage = (buf) => void drawFrame(buf);
   void invoke("subscribe_preview", { onFrame: channel });

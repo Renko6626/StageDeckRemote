@@ -3,6 +3,21 @@
 格式宽松版的 [Keep a Changelog](https://keepachangelog.com/);
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/) 但 0.x 期间允许小幅度破坏。
 
+## [0.3.1] - 2026-10-24
+
+### Fixed
+
+- 导播和手机同时读取 PowerPoint 状态时，最多等待 COM 通道释放 1 秒，减少正常扫描重叠导致的忙碌误报。
+
+### Changed
+
+- 导播整页扫描间隔调整为 2.5 秒，手机约每 2.7 秒扫描一次；心跳、权限刷新和画面推送频率不变，手机操作完成后立即刷新。
+
+### Upgrade notes
+
+- 使用 Relay 时同时更新本版随附的 Linux Relay 并刷新手机页面，使中继提供新的手机脚本。Relay 协议及服务版本仍为 0.1.2。
+- 尚未进行 Windows 安装、真实 PowerPoint 和手机扫码实机验收。
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

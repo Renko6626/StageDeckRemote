@@ -39,6 +39,25 @@ it('keeps the heartbeat online while PowerPoint status is blocked', async () => 
   expect(document.getElementById('conn-text')?.textContent).toBe('LINK');
 });
 
+it('refreshes control permissions between slower slide scans', async () => {
+  vi.useFakeTimers();
+  let current = 0;
+  let enabled = true;
+  mountPresenter(() => Promise.resolve(new Response(JSON.stringify({
+    available: true, in_show: true, current: ++current, total: 9, actions: [],
+  }))), () => Promise.resolve(new Response(JSON.stringify({
+    remote_enabled: enabled, control_locked: false, presenter_unlocked: true, is_controller: true,
+  }))));
+  await vi.advanceTimersByTimeAsync(100);
+  expect(document.getElementById('slide-pos')?.textContent).toBe('1/9');
+  enabled = false;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((document.querySelector('.d-next') as HTMLButtonElement).disabled).toBe(true);
+  expect(document.getElementById('slide-pos')?.textContent).toBe('1/9');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(document.getElementById('slide-pos')?.textContent).toBe('2/9');
+});
+
 it('aborts a hung status heartbeat after 5 seconds', async () => {
   vi.useFakeTimers();
   let signal: AbortSignal | undefined;
