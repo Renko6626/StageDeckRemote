@@ -7,7 +7,7 @@
 
 ## 下载与快速使用
 
-当前版本为 **v0.2.9**，安装包、Linux Relay 和校验文件见 [GitHub Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.2.9)。
+当前版本为 **v0.3.1**，安装包、Linux Relay 和校验文件见 [GitHub Release](https://github.com/Renko6626/StageDeckRemote/releases/tag/v0.3.1)。
 
 局域网直连不需要启动 Relay：
 
@@ -22,7 +22,7 @@
 
 Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播电脑和手机都必须能访问这台服务器的端口；使用校内服务器时，两端也需接入校园网或相应 VPN。
 
-**已有 Relay 部署：** 本次改动在 Windows 导播端，已更新过的服务器无需再次替换。0.2.7 初始 Relay 附件存在手机 POST 缺少 URL token 的问题；仍使用初始附件的服务器应更新本版附件并重启。鉴权规则见 [协议说明](docs/protocol.md#12-共通规则)。
+**已有 Relay 部署：** v0.3.1 调整了内嵌手机页面的扫描频率，使用中继时需同时更新本版 Relay 附件、重启中继并刷新手机页面；Relay 程序版本仍为 0.1.2。鉴权规则见 [协议说明](docs/protocol.md#12-共通规则)。
 
 ### 1. 下载并启动中继
 
@@ -31,7 +31,7 @@ Relay 是单独运行在 **Linux x86-64 服务器**上的中继程序。导播�
 ```bash
 mkdir -p stagedeck-relay
 cd stagedeck-relay
-curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.2.9/stagedeck-relay-linux-x86_64-0.1.1 -o relay
+curl -fL https://github.com/Renko6626/StageDeckRemote/releases/download/v0.3.1/stagedeck-relay-linux-x86_64-0.1.2 -o relay
 chmod +x relay
 ./relay
 ```
@@ -155,7 +155,9 @@ docs/                项目文档
 
 ## 开发
 
-前置：Node 18+、pnpm、Rust 1.77+。**目标平台为 Windows**（原生截图/输入依赖 Win32）。
+Windows 本地开发、增量构建、手机页面刷新和故障快照见 [Windows 快速迭代指南](docs/windows-development.md)。本次 GIF 页预览冻结的复现、对照数据和代码入口见 [排查交接记录](docs/debugging/2026-10-24-gif-preview.md)。
+
+前置：Node.js LTS、pnpm 9、Rust stable 和 Tauri 平台依赖。**目标平台为 Windows**（原生截图/输入依赖 Win32）。
 
 ```bash
 pnpm install
@@ -175,7 +177,7 @@ pnpm typecheck      # 仅类型检查前端
 - 在 Linux 上构建完整 Tauri 应用还需系统库 `webkit2gtk` / `librsvg`
   （见 <https://tauri.app/start/prerequisites/>）。生产构建建议在 Windows 上进行。
 
-## 当前状态（v0.2.7）
+## 当前状态（v0.3.1）
 
 核心闭环已打通并经多轮演进。Win32 原生能力均已实现为 `#[cfg(windows)]` 真实分支（非 Windows 为占位
 stub）：WGC/GDI BitBlt 截图（`capture.rs` + `capture_session.rs`）、SendInput 输入（`input.rs`）、
@@ -185,6 +187,8 @@ EnumWindows 窗口枚举（`window_manager.rs`）、PowerPoint COM 控制（`ppt
 
 关键演进：
 
+- **v0.3.1**：状态探测最多等待 COM 通道 1 秒，降低导播和手机整页扫描频率，保留操作后立即刷新。GIF 页引发的慢扫描与预览冻结仍在 Windows 实机排查，尚未修复。
+- **v0.3.0**：增加本地 JSONL 诊断及详细 COM 调用日志；COM 忙碌时保留基础翻页和屏幕坐标点击。图像与 COM 状态是两条独立链路。
 - **v0.2.7 Relay 补充附件**：修复手机 POST 请求缺少 URL token 导致的中继 401；需更新 Relay 并刷新手机页面。
 - **v0.2.7**：主动 COM 操作最多等待通道释放 500ms，减少与短暂状态探测冲突产生的拒绝；手机发送操作期间暂停新探测。宏请求仍忙时提示「本次操作未执行」。
 - **v0.2.6**：修复 Relay 重连、静止画面保留和连接接管，完善设置保存与只读 admin 状态页。
@@ -195,6 +199,6 @@ EnumWindows 窗口枚举（`window_manager.rs`）、PowerPoint COM 控制（`ppt
   导播 `relay_client` WS 控制隧道 + WS 推流、双模并存（QR 切换 LAN/Relay）。集成测试可在 Linux loopback
   端到端跑通。详见 [ADR-0007](docs/adr/0007-relay-hybrid-tunnel.md) 与 [`docs/architecture.md` §11](docs/architecture.md)。
 
-更新记录见 [CHANGELOG.md](CHANGELOG.md)。本版已完成 Windows 安装包与 Linux Relay 构建，尚未进行 Windows 安装及 PowerPoint 实机验收。
+更新记录见 [CHANGELOG.md](CHANGELOG.md)。本版已完成 Windows 安装包与 Linux Relay 构建；GIF 页慢扫描和预览冻结已有 Windows 实机反馈，仍待定位修复，不能将构建成功视为该问题已通过验收。
 
 文稿内部的 VBA 模拟点击、失效宏绑定和外置音效仍需由文稿作者核对，0.2.7 未修改 PPT 文件。已检查样本及未决事项见 [VBA 兼容性记录](docs/vba/compatibility-backlog.md)。路线图见 [`docs/project.md`](docs/project.md) §14–§15。
